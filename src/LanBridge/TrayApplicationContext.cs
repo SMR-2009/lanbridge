@@ -60,7 +60,10 @@ namespace LanBridge
                 () => _config.ReceiveFolder,
                 _ui,
                 _log,
-                options);
+                options)
+            {
+                AutoAcceptFromPaired = _config.AutoAcceptFromPaired
+            };
 
             _client = new TransferClient(
                 _config.DeviceName,
@@ -173,6 +176,11 @@ namespace LanBridge
             _discovery.Refresh();
         }
 
+        public void ShowSettings()
+        {
+            OpenSettings();
+        }
+
         public void ShowAbout()
         {
             using (var form = new AboutForm())
@@ -202,6 +210,7 @@ namespace LanBridge
             };
             _visibleItem.Click += (s, e) => SetVisible(_visibleItem.Checked);
             menu.Items.Add(_visibleItem);
+            menu.Items.Add(new ToolStripMenuItem("Settings…", null, (s, e) => OpenSettings()));
 
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(new ToolStripMenuItem("Open received folder", null, (s, e) => OpenReceiveFolder()));
@@ -317,6 +326,25 @@ namespace LanBridge
             _discovery.Discoverable = visible;
             _visibleItem.Checked = visible;
             _log.Info("Visible on network: " + visible);
+        }
+
+        private void OpenSettings()
+        {
+            var logPath = Path.Combine(
+                Path.GetDirectoryName(_configPath) ?? string.Empty,
+                "lanbridge.log");
+
+            using (var form = new SettingsForm(_config, _configPath, logPath))
+            {
+                var result = _deviceList != null && !_deviceList.IsDisposed
+                    ? form.ShowDialog(_deviceList)
+                    : form.ShowDialog();
+                if (result != DialogResult.OK) return;
+            }
+
+            _server.AutoAcceptFromPaired = _config.AutoAcceptFromPaired;
+            _discovery.Discoverable = _config.Discoverable;
+            _visibleItem.Checked = _config.Discoverable;
         }
 
         private void OpenReceiveFolder()

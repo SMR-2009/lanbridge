@@ -37,6 +37,7 @@ namespace LanBridge.Core
         private bool _disposed;
 
         public bool Discoverable { get; set; } = true;
+        public bool AutoAcceptFromPaired { get; set; }
         public bool IsReceiving => Volatile.Read(ref _receiving) != 0;
         public event Action<PeerRecord> DevicePaired;
 
@@ -498,18 +499,21 @@ namespace LanBridge.Core
                     hello.Name);
                 var offer = new TransferOffer(peer, offerDto.TransferId, files);
 
-                bool accepted;
-                using (var offerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+                var accepted = AutoAcceptFromPaired && hello.Paired;
+                if (!accepted)
                 {
-                    offerCts.CancelAfter(_options.OfferTimeout);
-                    try
+                    using (var offerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
                     {
-                        accepted = await _prompter.ApproveOfferAsync(offer, offerCts.Token).ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-                    {
-                        await WriteJsonAsync(ssl, FrameType.Reject, new RejectDto { Reason = "timeout" }, cancellationToken).ConfigureAwait(false);
-                        return;
+                        offerCts.CancelAfter(_options.OfferTimeout);
+                        try
+                        {
+                            accepted = await _prompter.ApproveOfferAsync(offer, offerCts.Token).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                        {
+                            await WriteJsonAsync(ssl, FrameType.Reject, new RejectDto { Reason = "timeout" }, cancellationToken).ConfigureAwait(false);
+                            return;
+                        }
                     }
                 }
 

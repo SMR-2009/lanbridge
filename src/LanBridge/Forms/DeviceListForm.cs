@@ -17,6 +17,7 @@ namespace LanBridge
         Task<TransferResult> SendAsync(DeviceRow row, IReadOnlyList<string> files);
         void Unpair(DeviceRow row);
         void RefreshDiscovery();
+        void ShowSettings();
         void ShowAbout();
     }
 
@@ -30,6 +31,7 @@ namespace LanBridge
         private readonly Label _headerSubtitle;
         private readonly Button _primary;
         private readonly Button _refresh;
+        private readonly Button _settings;
         private readonly Button _about;
         private readonly Button _close;
         private readonly Timer _timer;
@@ -180,6 +182,10 @@ namespace LanBridge
                 RefreshRows();
             };
             buttons.Controls.Add(_refresh);
+
+            _settings = MakeButton("Settings", false);
+            _settings.Click += (s, e) => _host.ShowSettings();
+            buttons.Controls.Add(_settings);
 
             _about = MakeButton("About", false);
             _about.Click += (s, e) => _host.ShowAbout();
