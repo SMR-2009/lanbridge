@@ -9,6 +9,8 @@ namespace LanBridge
     public sealed class WinFormsUi : ITransferPrompter, IClientPrompter
     {
         private readonly SynchronizationContext _context;
+        private readonly Control _uiHost;
+        private readonly int _uiThreadId;
         private readonly ILogger _log;
         private readonly Action _cancelReceive;
         private readonly Action _cancelSend;
@@ -18,9 +20,11 @@ namespace LanBridge
         private ProgressForm _receiveProgress;
         private ProgressForm _sendProgress;
 
-        public WinFormsUi(ILogger log, Action cancelReceive, Action cancelSend)
+        public WinFormsUi(ILogger log, Action cancelReceive, Action cancelSend, Control uiHost = null)
         {
             _log = log ?? NullLogger.Instance;
+            _uiHost = uiHost;
+            _uiThreadId = Thread.CurrentThread.ManagedThreadId;
             _context = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
             _cancelReceive = cancelReceive;
             _cancelSend = cancelSend;
@@ -30,10 +34,25 @@ namespace LanBridge
         {
             if (action == null) return;
 
-            if (SynchronizationContext.Current == _context)
+            // The UI host is stronger than SynchronizationContext: it belongs to
+            // the thread that created it and does not depend on when Application.Run
+            // installs its own context.
+            if (Thread.CurrentThread.ManagedThreadId == _uiThreadId)
             {
                 InvokeSafely(action);
                 return;
+            }
+
+            if (_uiHost != null && !_uiHost.IsDisposed && _uiHost.IsHandleCreated)
+            {
+                try
+                {
+                    _uiHost.BeginInvoke(action);
+                    return;
+                }
+                catch (InvalidOperationException)
+                {
+                }
             }
 
             _context.Post(_ => InvokeSafely(action), null);
@@ -43,6 +62,8 @@ namespace LanBridge
             PairingRequest request,
             CancellationToken cancellationToken)
         {
+            _log.Info("Pairing approval requested on thread " + Thread.CurrentThread.ManagedThreadId
+                + "; UI thread " + _uiThreadId);
             var result = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             if (cancellationToken.IsCancellationRequested)
             {
@@ -52,6 +73,8 @@ namespace LanBridge
 
             RunOnUi(() =>
             {
+                _log.Info("Pairing approval UI callback on thread " + Thread.CurrentThread.ManagedThreadId
+                    + "; formInvokeRequired=" + (_pairingForm != null && _pairingForm.InvokeRequired));
                 if (cancellationToken.IsCancellationRequested)
                 {
                     result.TrySetResult(false);
@@ -64,7 +87,7 @@ namespace LanBridge
                     return;
                 }
 
-                var form = new PairingForm(request.Peer);
+                var form = new PairingForm(request.Peer, _log);
                 _pairingForm = form;
                 form.Approved += () => result.TrySetResult(true);
                 form.Denied += () => result.TrySetResult(false);
@@ -75,6 +98,7 @@ namespace LanBridge
                 };
                 form.Show();
                 form.Activate();
+                _log.Info("Pairing approval form shown; invokeRequired=" + form.InvokeRequired);
             });
 
             var registration = cancellationToken.Register(() => RunOnUi(() =>
@@ -97,11 +121,14 @@ namespace LanBridge
             {
                 if (_pairingForm == null || _pairingForm.IsDisposed)
                 {
-                    _pairingForm = new PairingForm(display.Peer);
+                    _pairingForm = new PairingForm(display.Peer, _log);
                     _pairingForm.Show();
                 }
+                _log.Info("Showing pairing code on thread " + Thread.CurrentThread.ManagedThreadId
+                    + "; invokeRequired=" + _pairingForm.InvokeRequired);
                 _pairingForm.ShowCode(display);
                 _pairingForm.Activate();
+                _log.Info("Pairing code displayed.");
             });
         }
 
