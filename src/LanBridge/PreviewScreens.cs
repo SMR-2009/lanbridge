@@ -22,14 +22,14 @@ namespace LanBridge
                 IPAddress.Parse("192.168.10.7"),
                 45873,
                 new string('a', 64),
-                "device-rohan",
-                "Rohan-Laptop");
+                "device-a",
+                "Laptop-A");
 
             Capture(new DeviceListForm(new PreviewHost()), output, "device-list");
 
             var firstRunConfig = AppConfig.CreateDefault();
-            firstRunConfig.DeviceName = "Rohan-Laptop";
-            firstRunConfig.ReceiveFolder = @"C:\Users\Rohan\Downloads\LanBridge";
+            firstRunConfig.DeviceName = "Laptop-A";
+            firstRunConfig.ReceiveFolder = @"C:\Users\Public\Downloads\LanBridge";
             Capture(new FirstRunForm(firstRunConfig), output, "first-run");
 
             using (var pairing = new PairingForm(peer))
@@ -101,8 +101,8 @@ namespace LanBridge
                     new DeviceRow
                     {
                         Fingerprint = new string('a', 64),
-                        DeviceId = "device-rohan",
-                        Name = "Rohan-Laptop",
+                        DeviceId = "device-a",
+                        Name = "Laptop-A",
                         IpAddress = "192.168.10.7",
                         Port = 45873,
                         State = DeviceState.Paired,

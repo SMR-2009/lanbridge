@@ -26,7 +26,7 @@ namespace LanBridge.Core
             {
                 DeviceName = Environment.MachineName,
                 ReceiveFolder = Path.Combine(profile, "Downloads", "LanBridge"),
-                StartWithWindows = false,
+                StartWithWindows = true,
                 Discoverable = true,
                 AutoAcceptFromPaired = false,
                 FirewallRuleAdded = false,

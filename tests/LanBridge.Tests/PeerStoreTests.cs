@@ -13,14 +13,14 @@ namespace LanBridge.Tests
         {
             using var profile = new TempProfile();
             var store = PeerStore.Load(profile.PeerPath, NullLogger.Instance);
-            store.Upsert(Record("fp-1", "device-1", "Rohan-Laptop", "192.168.10.7", 45873));
+            store.Upsert(Record("fp-1", "device-1", "Laptop-A", "192.168.10.7", 45873));
             store.Save();
 
             var loaded = PeerStore.Load(profile.PeerPath, NullLogger.Instance);
             var peer = Assert.Single(loaded.Peers);
             Assert.Equal("fp-1", peer.Fingerprint);
             Assert.Equal("device-1", peer.DeviceId);
-            Assert.Equal("Rohan-Laptop", peer.Name);
+            Assert.Equal("Laptop-A", peer.Name);
             Assert.Equal("192.168.10.7", peer.LastIp);
             Assert.Equal(45873, peer.LastPort);
         }

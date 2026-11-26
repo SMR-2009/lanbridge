@@ -114,6 +114,7 @@ namespace LanBridge.Core
             new Dictionary<string, DateTime>(StringComparer.Ordinal);
 
         private UdpClient _udp;
+        private LanScope _scope;
         private CancellationTokenSource _cancellation;
         private Task _receiveLoop;
         private Task _announceLoop;
@@ -165,6 +166,7 @@ namespace LanBridge.Core
             if (_disposed) throw new ObjectDisposedException(nameof(DiscoveryService));
             if (_udp != null) throw new InvalidOperationException("Discovery is already started.");
 
+            _scope = LanScope.Capture();
             _udp = new UdpClient(new IPEndPoint(IPAddress.Any, _port));
             _udp.EnableBroadcast = true;
             _cancellation = new CancellationTokenSource();
@@ -355,11 +357,24 @@ namespace LanBridge.Core
                 var lost = new List<DiscoveredDevice>();
                 lock (_gate)
                 {
-                    var cutoff = DateTime.UtcNow - TimeSpan.FromSeconds(15);
+                    var now = DateTime.UtcNow;
+                    var cutoff = now - TimeSpan.FromSeconds(15);
                     foreach (var device in _devices.Values.Where(device => device.LastSeenUtc < cutoff).ToList())
                     {
                         lost.Add(device);
                         _devices.Remove(device.Fingerprint);
+                    }
+
+                    var rateCutoff = now - TimeSpan.FromMinutes(1);
+                    foreach (var key in _rateLimits.Where(pair => pair.Value < rateCutoff).Select(pair => pair.Key).ToList())
+                    {
+                        _rateLimits.Remove(key);
+                    }
+
+                    var confirmCutoff = now - TimeSpan.FromMinutes(10);
+                    foreach (var key in _confirmCache.Where(pair => pair.Value < confirmCutoff).Select(pair => pair.Key).ToList())
+                    {
+                        _confirmCache.Remove(key);
                     }
                 }
 
@@ -431,7 +446,8 @@ namespace LanBridge.Core
             var endpoints = new List<IPEndPoint>();
             try
             {
-                foreach (var iface in LanScope.Capture().Interfaces)
+                var scope = _scope ?? LanScope.Capture();
+                foreach (var iface in scope.Interfaces)
                 {
                     endpoints.Add(new IPEndPoint(iface.Broadcast, _port));
                 }
@@ -463,7 +479,8 @@ namespace LanBridge.Core
         {
             if (remote == null || remote.AddressFamily != AddressFamily.InterNetwork) return false;
             if (IPAddress.IsLoopback(remote)) return _allowLoopback;
-            return LanScope.Capture().IsEligiblePeer(remote);
+            var scope = _scope ?? LanScope.Capture();
+            return scope.IsEligiblePeer(remote);
         }
 
         private bool AllowRate(string key)
@@ -480,14 +497,28 @@ namespace LanBridge.Core
 
         private void OnNetworkAddressChanged(object sender, EventArgs e)
         {
-            try { Refresh(); } catch { }
+            try
+            {
+                _scope = LanScope.Capture();
+                Refresh();
+            }
+            catch
+            {
+            }
         }
 
         private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
         {
             if (e.Mode == PowerModes.Resume)
             {
-                try { Refresh(); } catch { }
+                try
+                {
+                    _scope = LanScope.Capture();
+                    Refresh();
+                }
+                catch
+                {
+                }
             }
         }
 
@@ -507,6 +538,7 @@ namespace LanBridge.Core
             try { Task.WaitAll(tasks, TimeSpan.FromSeconds(2)); } catch { }
 
             _udp = null;
+            _scope = null;
             _cancellation?.Dispose();
             _cancellation = null;
             _receiveLoop = null;

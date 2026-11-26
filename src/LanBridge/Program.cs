@@ -73,6 +73,23 @@ namespace LanBridge
                     ? AppConfig.CreateDefault()
                     : AppConfig.Load(configPath, log);
 
+                if (!firstRun)
+                {
+                    try
+                    {
+                        var startAtSignIn = Startup.IsEnabled();
+                        if (config.StartWithWindows != startAtSignIn)
+                        {
+                            config.StartWithWindows = startAtSignIn;
+                            config.Save(configPath);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        log.Warn("Could not read the startup setting: " + ex.Message);
+                    }
+                }
+
                 if (firstRun)
                 {
                     bool addFirewallRule;
@@ -127,6 +144,12 @@ namespace LanBridge
 
                 using (var context = new TrayApplicationContext(config, identity, peers, log))
                 {
+                    if (Environment.GetCommandLineArgs().Any(
+                        argument => string.Equals(argument, "--show", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        context.ShowDeviceList();
+                    }
+
                     Application.Run(context);
                 }
             }

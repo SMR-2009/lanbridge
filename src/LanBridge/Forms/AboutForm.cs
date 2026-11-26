@@ -99,18 +99,9 @@ namespace LanBridge
             link.LinkClicked += (s, e) => OpenProjectPage();
             Controls.Add(link);
 
-            var close = new Button
-            {
-                Text = "Close",
-                Size = new Size(96, 34),
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
-                Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(37, 99, 235),
-                ForeColor = Color.White,
-                Location = new Point(380, 306)
-            };
-            close.FlatAppearance.BorderSize = 0;
+            var close = UiTheme.CreateButton("Close", true);
+            close.Size = new Size(96, 34);
+            close.Location = new Point(380, 306);
             close.Click += (s, e) => Close();
             Controls.Add(close);
             AcceptButton = close;

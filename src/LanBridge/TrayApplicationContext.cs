@@ -24,6 +24,7 @@ namespace LanBridge
         private readonly TransferClient _client;
         private readonly DiscoveryService _discovery;
         private readonly NotifyIcon _tray;
+        private readonly Icon _trayIcon;
         private readonly ContextMenuStrip _menu;
         private ToolStripMenuItem _devicesMenu;
         private ToolStripMenuItem _visibleItem;
@@ -101,10 +102,11 @@ namespace LanBridge
                 });
             };
 
+            _trayIcon = LoadIcon();
             _tray = new NotifyIcon
             {
-                Icon = LoadIcon(),
-                Text = "LanBridge — secure local file transfer",
+                Icon = _trayIcon,
+                Text = "LanBridge - secure local file transfer",
                 Visible = true
             };
             _menu = BuildMenu();
@@ -123,6 +125,10 @@ namespace LanBridge
             {
                 _tray.Visible = false;
                 _tray.Dispose();
+                _trayIcon.Dispose();
+                _discovery.Dispose();
+                _server.Dispose();
+                _ui.CloseAll();
                 throw;
             }
         }
@@ -176,6 +182,11 @@ namespace LanBridge
             _discovery.Refresh();
         }
 
+        public void ShowDeviceList()
+        {
+            OpenDeviceList(null);
+        }
+
         public void ShowSettings()
         {
             OpenSettings();
@@ -224,7 +235,7 @@ namespace LanBridge
 
         private void RebuildDevicesMenu()
         {
-            _devicesMenu.DropDownItems.Clear();
+            ClearAndDispose(_devicesMenu.DropDownItems);
             var peers = _peers.Peers
                 .OrderBy(peer => Sanitizer.SanitizeDeviceName(peer.Name), StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
@@ -352,10 +363,12 @@ namespace LanBridge
             try
             {
                 Directory.CreateDirectory(_config.ReceiveFolder);
-                Process.Start(new ProcessStartInfo("explorer.exe", "\"" + _config.ReceiveFolder + "\"")
+                using (Process.Start(new ProcessStartInfo("explorer.exe", "\"" + _config.ReceiveFolder + "\"")
                 {
                     UseShellExecute = true
-                });
+                }))
+                {
+                }
             }
             catch (Exception ex)
             {
@@ -392,6 +405,7 @@ namespace LanBridge
 
             if (_deviceList != null && !_deviceList.IsDisposed) _deviceList.Close();
             _tray.Dispose();
+            _trayIcon.Dispose();
             _menu.Dispose();
             ExitThread();
         }
@@ -403,10 +417,11 @@ namespace LanBridge
                 _disposed = true;
                 try { _outboundCts?.Cancel(); } catch { }
                 _tray?.Dispose();
+                _trayIcon?.Dispose();
                 _menu?.Dispose();
                 _discovery?.Dispose();
                 _server?.Dispose();
-                if (_ui != null) _ui.RunOnUi(() => { });
+                _ui?.CloseAll();
             }
 
             base.Dispose(disposing);
@@ -428,6 +443,16 @@ namespace LanBridge
             return true;
         }
 
+        private static void ClearAndDispose(ToolStripItemCollection items)
+        {
+            while (items.Count > 0)
+            {
+                var item = items[0];
+                items.RemoveAt(0);
+                item.Dispose();
+            }
+        }
+
         private static Icon LoadIcon()
         {
             try
@@ -438,7 +463,8 @@ namespace LanBridge
             catch
             {
             }
-            return SystemIcons.Application;
+
+            return (Icon)SystemIcons.Application.Clone();
         }
     }
 }

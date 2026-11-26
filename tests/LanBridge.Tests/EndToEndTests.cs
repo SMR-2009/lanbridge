@@ -151,7 +151,7 @@ namespace LanBridge.Tests
         [Fact]
         public void DeviceNameAndLogValues_DoNotInjectLines()
         {
-            var name = Sanitizer.SanitizeDeviceName("Rohan\r\nFAKE LOG");
+            var name = Sanitizer.SanitizeDeviceName("Laptop-A\r\nFAKE LOG");
             var log = Sanitizer.SanitizeLogValue("a\r\nb", 20);
 
             Assert.DoesNotContain("\r", name);

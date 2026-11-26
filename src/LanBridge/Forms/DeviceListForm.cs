@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using LanBridge.Core;
@@ -40,6 +41,8 @@ namespace LanBridge
         private readonly ToolStripMenuItem _unpairItem;
         private readonly ToolStripMenuItem _copyItem;
         private List<string> _sendFiles;
+        private string _lastRowsSignature;
+        private int _lastSeenRefreshTick;
         private bool _busy;
 
         public DeviceListForm(IDeviceListHost host, IReadOnlyList<string> sendFiles = null)
@@ -69,6 +72,7 @@ namespace LanBridge
             var header = new Panel
             {
                 Dock = DockStyle.Fill,
+                Margin = Padding.Empty,
                 BackColor = Color.FromArgb(15, 23, 42)
             };
             root.Controls.Add(header, 0, 0);
@@ -97,6 +101,7 @@ namespace LanBridge
             var body = new Panel
             {
                 Dock = DockStyle.Fill,
+                Margin = Padding.Empty,
                 Padding = new Padding(24, 10, 24, 10),
                 BackColor = Color.FromArgb(248, 250, 252)
             };
@@ -157,6 +162,7 @@ namespace LanBridge
             var footer = new Panel
             {
                 Dock = DockStyle.Fill,
+                Margin = Padding.Empty,
                 Padding = new Padding(24, 14, 24, 14),
                 BackColor = Color.White
             };
@@ -164,10 +170,13 @@ namespace LanBridge
 
             var buttons = new FlowLayoutPanel
             {
-                Dock = DockStyle.Right,
+                Dock = DockStyle.Fill,
                 FlowDirection = FlowDirection.RightToLeft,
                 WrapContents = false,
-                AutoSize = true
+                AutoSize = false,
+                Height = 40,
+                Margin = Padding.Empty,
+                Padding = new Padding(0, 2, 0, 0)
             };
             footer.Controls.Add(buttons);
 
@@ -179,7 +188,7 @@ namespace LanBridge
             _refresh.Click += (s, e) =>
             {
                 _host.RefreshDiscovery();
-                RefreshRows();
+                RefreshRows(true);
             };
             buttons.Controls.Add(_refresh);
 
@@ -206,7 +215,7 @@ namespace LanBridge
             _menu.Items.Add(new ToolStripMenuItem("Refresh", null, (s, e) =>
             {
                 _host.RefreshDiscovery();
-                RefreshRows();
+                RefreshRows(true);
             }));
             _menu.Opening += (s, e) =>
             {
@@ -224,11 +233,11 @@ namespace LanBridge
             _list.DragDrop += OnDragDrop;
 
             _timer = new Timer { Interval = 1000 };
-            _timer.Tick += (s, e) => RefreshRows();
+            _timer.Tick += (s, e) => RefreshRows(false);
             _timer.Start();
 
             SetSendFiles(sendFiles);
-            RefreshRows();
+            RefreshRows(true);
         }
 
         public void SetSendFiles(IReadOnlyList<string> sendFiles)
@@ -292,7 +301,7 @@ namespace LanBridge
                     }
 
                     _host.RefreshDiscovery();
-                    RefreshRows();
+                    RefreshRows(true);
                     var pairedRow = _host.BuildRows().FirstOrDefault(candidate => candidate.Fingerprint == row.Fingerprint);
                     if (_sendFiles != null && pairedRow != null)
                     {
@@ -320,7 +329,7 @@ namespace LanBridge
             finally
             {
                 _busy = false;
-                RefreshRows();
+                RefreshRows(true);
             }
         }
 
@@ -342,55 +351,89 @@ namespace LanBridge
             }
         }
 
-        private void RefreshRows()
+        private void RefreshRows(bool force)
         {
             var rows = _host.BuildRows();
-            var selected = SelectedRow;
-            var selectedFingerprint = selected?.Fingerprint;
+            var signature = BuildRowSignature(rows);
+            var changed = force || !string.Equals(signature, _lastRowsSignature, StringComparison.Ordinal);
 
-            _list.BeginUpdate();
-            _list.Items.Clear();
-            foreach (var row in rows)
+            if (changed)
             {
-                var item = new ListViewItem(row.Name) { Tag = row, UseItemStyleForSubItems = true };
-                item.SubItems.Add(UiFormat.State(row.State));
-                item.SubItems.Add(row.HasEndpoint ? row.IpAddress + ":" + row.Port : "—");
-                item.SubItems.Add(UiFormat.Relative(row.LastSeenUtc));
-                item.ForeColor = StateColor(row.State);
-                if (row.State == DeviceState.Paired) item.Font = _boldFont;
-                _list.Items.Add(item);
-            }
-            _list.EndUpdate();
+                var selected = SelectedRow;
+                var selectedFingerprint = selected?.Fingerprint;
 
-            var isEmpty = rows.Count == 0;
-            _list.Visible = !isEmpty;
-            _empty.Visible = isEmpty;
-            _empty.Text = EmptyText();
-            if (isEmpty) _empty.BringToFront(); else _list.BringToFront();
-
-            _status.Text = BuildStatus(rows);
-
-            if (!isEmpty)
-            {
-                ListViewItem toSelect = null;
-                if (selectedFingerprint != null)
+                _list.BeginUpdate();
+                _list.Items.Clear();
+                foreach (var row in rows)
                 {
-                    foreach (ListViewItem item in _list.Items)
+                    var item = new ListViewItem(row.Name) { Tag = row, UseItemStyleForSubItems = true };
+                    item.SubItems.Add(UiFormat.State(row.State));
+                    item.SubItems.Add(row.HasEndpoint ? row.IpAddress + ":" + row.Port : "—");
+                    item.SubItems.Add(UiFormat.Relative(row.LastSeenUtc));
+                    item.ForeColor = StateColor(row.State);
+                    if (row.State == DeviceState.Paired) item.Font = _boldFont;
+                    _list.Items.Add(item);
+                }
+                _list.EndUpdate();
+
+                _lastRowsSignature = signature;
+                _lastSeenRefreshTick = Environment.TickCount;
+
+                var isEmpty = rows.Count == 0;
+                _list.Visible = !isEmpty;
+                _empty.Visible = isEmpty;
+                _empty.Text = EmptyText();
+                if (isEmpty) _empty.BringToFront(); else _list.BringToFront();
+
+                if (!isEmpty)
+                {
+                    ListViewItem toSelect = null;
+                    if (selectedFingerprint != null)
                     {
-                        var row = item.Tag as DeviceRow;
-                        if (row != null && row.Fingerprint == selectedFingerprint)
+                        foreach (ListViewItem item in _list.Items)
                         {
-                            toSelect = item;
-                            break;
+                            var row = item.Tag as DeviceRow;
+                            if (row != null && row.Fingerprint == selectedFingerprint)
+                            {
+                                toSelect = item;
+                                break;
+                            }
                         }
                     }
+                    if (toSelect == null) toSelect = _list.Items[0];
+                    toSelect.Selected = true;
+                    toSelect.Focused = true;
                 }
-                if (toSelect == null) toSelect = _list.Items[0];
-                toSelect.Selected = true;
-                toSelect.Focused = true;
+            }
+            else if (Environment.TickCount - _lastSeenRefreshTick >= 5000)
+            {
+                _lastSeenRefreshTick = Environment.TickCount;
+                foreach (ListViewItem item in _list.Items)
+                {
+                    var row = item.Tag as DeviceRow;
+                    if (row != null && item.SubItems.Count > 3)
+                    {
+                        item.SubItems[3].Text = UiFormat.Relative(row.LastSeenUtc);
+                    }
+                }
             }
 
+            _status.Text = BuildStatus(rows);
             UpdatePrimary();
+        }
+
+        private static string BuildRowSignature(IReadOnlyList<DeviceRow> rows)
+        {
+            var builder = new StringBuilder();
+            foreach (var row in rows)
+            {
+                builder.Append(row.Fingerprint).Append('\u001e')
+                    .Append(row.Name).Append('\u001e')
+                    .Append((int)row.State).Append('\u001e')
+                    .Append(row.IpAddress).Append('\u001e')
+                    .Append(row.Port).Append('\u001f');
+            }
+            return builder.ToString();
         }
 
         private void OnDragEnter(object sender, DragEventArgs e)
@@ -508,7 +551,7 @@ namespace LanBridge
             if (answer != DialogResult.Yes) return;
 
             _host.Unpair(row);
-            RefreshRows();
+            RefreshRows(true);
         }
 
         private void CopyFingerprint()
@@ -557,22 +600,10 @@ namespace LanBridge
             base.OnFormClosed(e);
         }
 
-        private static Button MakeButton(string text, bool primary)
+                private static Button MakeButton(string text, bool primary)
         {
-            var button = new Button
-            {
-                Text = text,
-                Size = new Size(104, 36),
-                Margin = new Padding(8, 0, 0, 0),
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
-                Cursor = Cursors.Hand,
-                BackColor = primary ? Color.FromArgb(37, 99, 235) : Color.White,
-                ForeColor = primary ? Color.White : Color.FromArgb(30, 41, 59)
-            };
-            button.FlatAppearance.BorderSize = primary ? 0 : 1;
-            button.FlatAppearance.BorderColor = Color.FromArgb(203, 213, 225);
-            return button;
+            return UiTheme.CreateButton(text, primary);
         }
+
     }
 }

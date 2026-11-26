@@ -1,8 +1,7 @@
 # LanBridge — Design
 
 - Date: 2026-11-26
-- Status: Implemented in v0.1.0
-- Owner: R. Murtaza (@SMR-2009)
+- Status: Implemented; current release line is v0.1.x
 - Working name: **LanBridge**
 - Target repo: `SMR-2009/lanbridge` (public, MIT)
 - First release: `v0.1.0`
@@ -76,9 +75,9 @@ If the firewall step is declined, the app still runs but shows a warning that di
 Either laptop can start pairing.
 
 1. User opens the device list and clicks an unpaired laptop.
-2. The other laptop shows: **"Rohan-PC (192.168.10.7) wants to pair"** with Approve and Deny buttons, plus "Only approve if you just clicked Pair on the other laptop." No code is shown yet.
+2. The other laptop shows: **"Laptop-B (192.168.10.7) wants to pair"** with Approve and Deny buttons, plus "Only approve if you just clicked Pair on the other laptop." No code is shown yet.
 3. The approval prompt waits 120 seconds from the pairing request. If it times out, the responder sends `PAIR_DENY` and both sides close the session.
-4. On Approve, it displays a six-digit code, for example **482 913**, and says "Enter this code on Rohan-PC. Expires in 2:00." The 120-second code window starts now.
+4. On Approve, it displays a six-digit code, for example **482 913**, and says "Enter this code on Laptop-B. Expires in 2:00." The 120-second code window starts now.
 5. On the initiating laptop, the user types the code. It is checked locally against the pairing channel; the code itself is never sent over the network.
 6. If it matches and the other side approved, the initiator sends `PAIR_PROOF`; the responder verifies it, both store each other's full certificate fingerprint, and both show **Paired**.
 7. Three wrong attempts, a code-window timeout, or a disconnect cancels the pairing. If the initiator disconnects while the responder is still deciding, the responder closes the prompt.
@@ -109,7 +108,7 @@ If the tray icon's **Devices** submenu is used, clicking a paired device opens t
 ```
 Send files…                  (bold/default)
 Devices ▸
-  Rohan-Laptop               (paired)
+  Laptop-A                   (paired)
   Study-Laptop               (paired)
   ─────────
   Pair new device…           (opens device list)
@@ -152,12 +151,12 @@ Left-clicking the tray icon opens the device list.
 - No devices found → explain firewall, network profile, AP isolation, and VPN.
 - Port already in use → clear error with the port number; app exits.
 - Firewall rule missing/denied → warning banner in the device list.
-- Receiver offline → "Rohan-Laptop is offline. Last seen 2 minutes ago. Send will try the last known address." If that fails, show the error and keep the row.
-- Busy → "Rohan-Laptop is already receiving a file" for a second inbound offer; "A send is already in progress" for a second outbound. One inbound and one outbound may run at the same time.
+- Receiver offline → "Laptop-A is offline. Last seen 2 minutes ago. Send will try the last known address." If that fails, show the error and keep the row.
+- Busy → "Laptop-A is already receiving a file" for a second inbound offer; "A send is already in progress" for a second outbound. One inbound and one outbound may run at the same time.
 - Disk full → offer declined or transfer aborted before writing; message includes required space.
 - Hash mismatch → the whole transfer aborts; the failed `.part` is removed; completed files are kept; both sides show which file failed and how many completed.
 - Peer certificate changed → never auto-trust and never auto-unpair. Keep the old pinned row, show the new certificate as an **Identity changed** candidate, and explain: "If you reinstalled LanBridge on that laptop, unpair the old entry and pair again."
-- Pairing approval timeout → the responder sends `PAIR_DENY`; the initiator shows "No response from Rohan-Laptop."
+- Pairing approval timeout → the responder sends `PAIR_DENY`; the initiator shows "No response from Laptop-A."
 - Pairing code timeout → both sides show "Pairing expired."
 - Hidden mode → unpaired requests get "This laptop is not discoverable"; the UI explains how to turn visibility on.
 - Device names are self-asserted. The pairing prompt shows the claimed name and IP; approve only if you just started the pairing.
@@ -552,7 +551,6 @@ A manual download-and-run path is documented for users who do not want to pipe a
 - Community files: `LICENSE`, `SECURITY.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `CODE_OF_CONDUCT.md`, issue forms, and a pull-request template.
 - Release: annotated tag `v0.1.0`, release notes summarizing features/known limitations, SHA-256 checksums, and the install one-liner.
 - Repo settings: issues enabled, wiki/projects disabled, default branch `main`, branch protection requiring the build workflow after the first green run.
-- Commit identity: `R. Murtaza <209728396+SMR-2009@users.noreply.github.com>` (repo-local config; the GitHub account's private email is not exposed).
 
 GitHub Actions:
 
@@ -562,7 +560,7 @@ GitHub Actions:
 
 Repository policy:
 
-- Public, MIT license, copyright Rohan.
+- Public, MIT license, copyright LanBridge contributors.
 - Default branch `main`.
 - Issues enabled; no code of conduct in v0.1 (add later if the project gets users).
 - README includes screenshots, install, usage, security model, limitations, build instructions, and a link to LocalSend as the cross-platform alternative.
@@ -634,10 +632,10 @@ Additional cases:
 5. **M5 — Hardening:** first-run wizard, firewall, settings, integration tests, error states, DPI/accessibility pass.
 6. **M6 — Release:** README, SECURITY, protocol docs, CI, GitHub repo, v0.1.0 release, two-laptop test.
 
-## 17. Decisions I will make unless you object
+## 17. Decisions
 
 - Name: **LanBridge**.
-- License: **MIT**, copyright R. Murtaza.
+- License: **MIT**.
 - Repo: **public** at `SMR-2009/lanbridge` — "Tiny, secure, local-only file transfer for Windows."
 - Receive folder: `%USERPROFILE%\Downloads\LanBridge`.
 - Auto-start: offered and checked in the first-run wizard.

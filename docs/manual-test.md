@@ -4,7 +4,7 @@ This is the release gate. Run it once with the build you intend to publish. Both
 
 ## Prepare
 
-- [ ] Copy `artifacts\lanbridge-v0.1.1-win.zip` to laptop B, extract it, and run `LanBridge.exe`.
+- [ ] Copy `artifacts\lanbridge-v0.1.2-win.zip` to laptop B, extract it, and run `LanBridge.exe`.
 - [ ] Run `artifacts\LanBridge.exe` on laptop A.
 - [ ] Complete first-run on both: device name, receive folder, and startup choice.
 - [ ] On first install only, approve the UAC prompt for the firewall rule. There should be no UAC prompt on later launches.

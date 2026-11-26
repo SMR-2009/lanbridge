@@ -154,8 +154,9 @@ namespace LanBridge
             repair.Size = new Size(156, 34);
             repair.Click += async (s, e) =>
             {
-                _status.Text = "Waiting for Windows permission…";
+                _status.Text = "Waiting for Windows permission...";
                 var ok = await Firewall.AddRuleAsync(Application.ExecutablePath);
+                if (IsDisposed) return;
                 _status.Text = ok ? "Firewall rule added." : "The firewall rule was not added.";
             };
             Controls.Add(repair);
@@ -277,31 +278,22 @@ namespace LanBridge
                     ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LanBridge")
                     : Path.GetDirectoryName(_logPath);
                 if (!string.IsNullOrEmpty(folder)) Directory.CreateDirectory(folder);
-                Process.Start(new ProcessStartInfo("explorer.exe", "\"" + folder + "\"")
+                using (Process.Start(new ProcessStartInfo("explorer.exe", "\"" + folder + "\"")
                 {
                     UseShellExecute = true
-                });
+                }))
+                {
+                }
             }
             catch
             {
             }
         }
 
-        private static Button MakeButton(string text, bool primary)
+                private static Button MakeButton(string text, bool primary)
         {
-            var button = new Button
-            {
-                Text = text,
-                Size = new Size(104, 34),
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
-                Cursor = Cursors.Hand,
-                BackColor = primary ? Color.FromArgb(37, 99, 235) : Color.White,
-                ForeColor = primary ? Color.White : Color.FromArgb(30, 41, 59)
-            };
-            button.FlatAppearance.BorderSize = primary ? 0 : 1;
-            button.FlatAppearance.BorderColor = Color.FromArgb(203, 213, 225);
-            return button;
+            return UiTheme.CreateButton(text, primary);
         }
+
     }
 }
