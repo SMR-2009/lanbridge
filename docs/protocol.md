@@ -64,7 +64,7 @@ All JSON is UTF-8. Unknown fields are ignored so a newer peer can add fields wit
 {
   "v": 1,
   "id": "device-uuid",
-  "name": "Rohan-Laptop",
+  "name": "Laptop-A",
   "fp": "sha256-of-certificate-raw-bytes",
   "nonce": "base64-16-random-bytes",
   "intent": "pair",
@@ -142,7 +142,7 @@ Only one inbound transfer and one outbound transfer may run at a time per app. S
 Discovery uses UDP port `45873`, IPv4 only. A packet is `LNB1` followed by UTF-8 JSON, maximum 1,400 bytes.
 
 ```json
-{ "t": "a", "v": 1, "id": "device-uuid", "name": "Rohan-Laptop",
+{ "t": "a", "v": 1, "id": "device-uuid", "name": "Laptop-A",
   "port": 45873, "fp": "sha256-hex", "discoverable": true }
 
 { "t": "q", "v": 1, "id": "device-uuid" }

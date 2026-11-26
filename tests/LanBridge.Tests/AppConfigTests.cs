@@ -15,7 +15,7 @@ namespace LanBridge.Tests
             Assert.EndsWith(Path.Combine("Downloads", "LanBridge"), c.ReceiveFolder);
             Assert.True(c.Discoverable);
             Assert.False(c.AutoAcceptFromPaired);
-            Assert.False(c.StartWithWindows);
+            Assert.True(c.StartWithWindows);
             Assert.Equal(45873, c.TcpPort);
             Assert.Equal(45873, c.UdpPort);
             Assert.Equal(32, c.DeviceId.Length);
@@ -26,11 +26,11 @@ namespace LanBridge.Tests
         {
             using var profile = new TempProfile();
             var c = AppConfig.CreateDefault();
-            c.DeviceName = "Rohan-Laptop";
+            c.DeviceName = "Laptop-A";
             c.Discoverable = false;
             c.Save(profile.ConfigPath);
             var loaded = AppConfig.Load(profile.ConfigPath, NullLogger.Instance);
-            Assert.Equal("Rohan-Laptop", loaded.DeviceName);
+            Assert.Equal("Laptop-A", loaded.DeviceName);
             Assert.False(loaded.Discoverable);
             Assert.Equal(c.DeviceId, loaded.DeviceId);
         }

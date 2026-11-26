@@ -14,7 +14,7 @@ namespace LanBridge.Tests
         {
             var rows = DeviceRowMapper.Build(
                 Array.Empty<PeerRecord>(),
-                new[] { Discovered("fp-1", "d1", "Rohan-Laptop", "192.168.10.7") });
+                new[] { Discovered("fp-1", "d1", "Laptop-A", "192.168.10.7") });
 
             var row = Assert.Single(rows);
             Assert.Equal(DeviceState.Available, row.State);
@@ -41,7 +41,7 @@ namespace LanBridge.Tests
         public void PairedWithoutDiscovery_IsOfflineAndKeepsLastSeen()
         {
             var lastSeen = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc);
-            var peer = TestData.Record("fp-1", "d1", "Rohan-Laptop", "192.168.10.2", 45873);
+            var peer = TestData.Record("fp-1", "d1", "Laptop-A", "192.168.10.2", 45873);
             peer.LastSeenUtc = lastSeen;
 
             var rows = DeviceRowMapper.Build(new[] { peer }, Array.Empty<DiscoveredDevice>());
@@ -56,7 +56,7 @@ namespace LanBridge.Tests
         public void NewFingerprintForKnownDevice_IsIdentityChanged_AndOldPeerStaysOffline()
         {
             var peer = TestData.Record("fp-old", "d1", "Old name", "192.168.10.2", 45873);
-            var discovered = Discovered("fp-new", "d1", "Rohan-Laptop", "192.168.10.7");
+            var discovered = Discovered("fp-new", "d1", "Laptop-A", "192.168.10.7");
 
             var rows = DeviceRowMapper.Build(new[] { peer }, new[] { discovered });
 
@@ -130,7 +130,7 @@ namespace LanBridge.Tests
         {
             var rows = DeviceRowMapper.Build(
                 Array.Empty<PeerRecord>(),
-                new[] { Discovered("fp-1", "d1", "Rohan\r\nFAKE", "192.168.10.7") });
+                new[] { Discovered("fp-1", "d1", "Laptop-A\r\nFAKE", "192.168.10.7") });
 
             var row = Assert.Single(rows);
             Assert.DoesNotContain("\r", row.Name);

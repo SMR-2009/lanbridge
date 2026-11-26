@@ -21,6 +21,7 @@ param(
     [string]$Version,
     [switch]$NoShortcut,
     [switch]$NoFirewall,
+    [switch]$NoStartup,
     [switch]$SkipLaunch,
     [switch]$Help
 )
@@ -83,6 +84,7 @@ Usage:
 
   -SourceDir  Install from local release artifacts instead of GitHub.
   -NoFirewall Skip the one-time firewall rule; first run offers it.
+  -NoStartup  Do not start LanBridge when this user signs in.
   -NoShortcut Skip the Start Menu shortcut.
   -SkipLaunch Do not launch LanBridge after installing.
 
@@ -247,6 +249,21 @@ try {
         catch {
             Write-Warning "The Start Menu shortcut could not be created. The app is still installed."
         }
+    }
+
+    if (-not $NoStartup) {
+        try {
+            $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+            New-Item -Path $runKey -Force | Out-Null
+            Set-ItemProperty -Path $runKey -Name "LanBridge" -Value "`"$target`" --tray"
+            Write-Step "Start at sign-in enabled"
+        }
+        catch {
+            Write-Warning "Could not enable start at sign-in. You can turn it on in Settings."
+        }
+    }
+    else {
+        Write-Step "Skipped start at sign-in"
     }
 
     if (-not $NoFirewall) {

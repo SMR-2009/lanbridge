@@ -8,11 +8,11 @@ namespace LanBridge.Tests
         [Fact]
         public void DeviceName_RemovesLineBreaksAndControls()
         {
-            var result = Sanitizer.SanitizeDeviceName("Rohan\r\nFAKE\u0001");
+            var result = Sanitizer.SanitizeDeviceName("Laptop-A\r\nFAKE\u0001");
             Assert.DoesNotContain("\r", result);
             Assert.DoesNotContain("\n", result);
             Assert.DoesNotContain("\u0001", result);
-            Assert.Equal("Rohan FAKE", result);
+            Assert.Equal("Laptop-A FAKE", result);
         }
 
         [Fact]

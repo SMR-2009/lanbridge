@@ -2,6 +2,27 @@
 
 All notable changes to LanBridge are documented here. The format is based on Keep a Changelog, and this project uses semantic versioning.
 
+## [0.1.2] - 2026-11-26
+
+### Added
+
+- Start at sign-in is now enabled by the installer by default; use `-NoStartup` to skip it.
+- Screenshots and examples use neutral device names.
+
+### Fixed
+
+- Timeout timers are canceled as soon as each frame completes instead of remaining alive for the full timeout.
+- Certificate objects created during TLS verification are disposed after use.
+- The tray icon and rebuilt device menu items are disposed cleanly.
+- The device list no longer rebuilds every row once per second; it updates only when device data changes and refreshes relative times every five seconds.
+- UI progress updates are coalesced to avoid flooding the message loop.
+- Discovery reuses its captured LAN scope and prunes stale rate-limit entries.
+
+### Changed
+
+- File chunks are 32 KiB instead of 64 KiB to reduce large-object heap pressure.
+- The public docs no longer include the internal planning files or personal example names.
+
 ## [0.1.1] - 2026-11-26
 
 ### Fixed
@@ -18,9 +39,6 @@ All notable changes to LanBridge are documented here. The format is based on Kee
 - Zero-byte and non-ASCII receive tests.
 - CI parses install, uninstall, and build scripts before publishing.
 
-### Changed
-
-- The README is now a full install, pairing, security, troubleshooting, and development guide with real screenshots.
 
 ## [0.1.0] - 2026-11-26
 

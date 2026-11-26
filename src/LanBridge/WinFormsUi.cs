@@ -300,6 +300,7 @@ namespace LanBridge
         private sealed class UiProgress : IProgress<TransferProgress>
         {
             private readonly Action<TransferProgress> _apply;
+            private int _lastReportTick;
 
             public UiProgress(Action<TransferProgress> apply)
             {
@@ -309,6 +310,14 @@ namespace LanBridge
             public void Report(TransferProgress value)
             {
                 if (value == null) return;
+
+                if (!value.IsComplete && !value.Failed)
+                {
+                    var now = Environment.TickCount;
+                    if (now - _lastReportTick < 100) return;
+                    _lastReportTick = now;
+                }
+
                 try { _apply(value); } catch { }
             }
         }

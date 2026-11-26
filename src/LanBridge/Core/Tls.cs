@@ -38,8 +38,17 @@ namespace LanBridge.Core
             return new SslStream(inner, false, (sender, certificate, chain, errors) =>
             {
                 if (certificate == null) return false;
-                var verifiable = certificate as X509Certificate2 ?? new X509Certificate2(certificate);
-                return FixedTimeEquals(Fingerprint(verifiable), expectedServerFingerprint);
+
+                var verifiable = certificate as X509Certificate2;
+                if (verifiable != null)
+                {
+                    return FixedTimeEquals(Fingerprint(verifiable), expectedServerFingerprint);
+                }
+
+                using (var copy = new X509Certificate2(certificate))
+                {
+                    return FixedTimeEquals(Fingerprint(copy), expectedServerFingerprint);
+                }
             });
         }
 

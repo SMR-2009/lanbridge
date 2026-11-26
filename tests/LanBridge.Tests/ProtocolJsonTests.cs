@@ -15,7 +15,7 @@ namespace LanBridge.Tests
             {
                 V = 1,
                 Id = "abc",
-                Name = "Rohan-PC",
+                Name = "Laptop-B",
                 Fp = new string('a', 64),
                 Nonce = Convert.ToBase64String(new byte[] { 1, 2, 3 }),
                 Intent = "pair",
@@ -27,7 +27,7 @@ namespace LanBridge.Tests
 
             Assert.Equal(1, loaded.V);
             Assert.Equal("abc", loaded.Id);
-            Assert.Equal("Rohan-PC", loaded.Name);
+            Assert.Equal("Laptop-B", loaded.Name);
             Assert.Equal(new string('a', 64), loaded.Fp);
             Assert.Equal(hello.Nonce, loaded.Nonce);
             Assert.Equal("pair", loaded.Intent);

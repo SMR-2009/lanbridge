@@ -334,8 +334,8 @@ namespace LanBridge.Core
                         FileOptions.SequentialScan | FileOptions.Asynchronous))
                     using (var sha = SHA256.Create())
                     {
-                        var buffer = new byte[65536];
-                        var hashScratch = new byte[65536];
+                        var buffer = new byte[32768];
+                        var hashScratch = new byte[32768];
                         long sent = 0;
 
                         while (true)

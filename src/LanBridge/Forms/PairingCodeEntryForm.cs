@@ -148,21 +148,10 @@ namespace LanBridge
             Close();
         }
 
-        private static Button MakeButton(string text, bool primary)
+                private static Button MakeButton(string text, bool primary)
         {
-            var button = new Button
-            {
-                Text = text,
-                Size = new Size(96, 34),
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
-                Cursor = Cursors.Hand,
-                BackColor = primary ? Color.FromArgb(37, 99, 235) : Color.White,
-                ForeColor = primary ? Color.White : Color.FromArgb(30, 41, 59)
-            };
-            button.FlatAppearance.BorderSize = primary ? 0 : 1;
-            button.FlatAppearance.BorderColor = Color.FromArgb(203, 213, 225);
-            return button;
+            return UiTheme.CreateButton(text, primary);
         }
+
     }
 }

@@ -22,14 +22,21 @@ namespace LanBridge.Core
             if (task == null) throw new ArgumentNullException(nameof(task));
             cancellationToken.ThrowIfCancellationRequested();
 
-            var delay = Task.Delay(timeout, cancellationToken);
-            var completed = await Task.WhenAny(task, delay).ConfigureAwait(false);
-            if (completed != task)
+            // Cancel the delay when the operation finishes. Otherwise every frame
+            // leaves a timer alive until the full timeout expires.
+            using (var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                throw new TimeoutException("The operation timed out.");
+                var delay = Task.Delay(timeout, timeoutCts.Token);
+                var completed = await Task.WhenAny(task, delay).ConfigureAwait(false);
+                if (completed != task)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    throw new TimeoutException("The operation timed out.");
+                }
+
+                timeoutCts.Cancel();
+                return await task.ConfigureAwait(false);
             }
-            return await task.ConfigureAwait(false);
         }
 
         public static async Task WithTimeout(Task task, TimeSpan timeout, CancellationToken cancellationToken)
@@ -37,14 +44,19 @@ namespace LanBridge.Core
             if (task == null) throw new ArgumentNullException(nameof(task));
             cancellationToken.ThrowIfCancellationRequested();
 
-            var delay = Task.Delay(timeout, cancellationToken);
-            var completed = await Task.WhenAny(task, delay).ConfigureAwait(false);
-            if (completed != task)
+            using (var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                throw new TimeoutException("The operation timed out.");
+                var delay = Task.Delay(timeout, timeoutCts.Token);
+                var completed = await Task.WhenAny(task, delay).ConfigureAwait(false);
+                if (completed != task)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    throw new TimeoutException("The operation timed out.");
+                }
+
+                timeoutCts.Cancel();
+                await task.ConfigureAwait(false);
             }
-            await task.ConfigureAwait(false);
         }
 
         public static Task<Frame> ReadFrameAsync(Stream stream, TimeSpan timeout, CancellationToken cancellationToken)

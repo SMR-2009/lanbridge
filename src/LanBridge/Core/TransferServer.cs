@@ -130,8 +130,11 @@ namespace LanBridge.Core
                         return;
                     }
 
-                    var clientCertificate = new X509Certificate2(remoteCertificate);
-                    var clientFingerprint = Tls.Fingerprint(clientCertificate);
+                    string clientFingerprint;
+                    using (var clientCertificate = new X509Certificate2(remoteCertificate))
+                    {
+                        clientFingerprint = Tls.Fingerprint(clientCertificate);
+                    }
 
                     var helloFrame = await TimeoutIo.ReadFrameAsync(ssl, _options.ControlTimeout, cancellationToken).ConfigureAwait(false);
                     if (helloFrame.Type != FrameType.Hello)
