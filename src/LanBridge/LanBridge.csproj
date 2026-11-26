@@ -9,6 +9,7 @@
     <AssemblyName>LanBridge</AssemblyName>
     <RootNamespace>LanBridge</RootNamespace>
     <Version>0.1.0</Version>
+    <ApplicationIcon>..\..\assets\icon.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>

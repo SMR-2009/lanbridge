@@ -14,6 +14,15 @@ namespace LanBridge
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
+#if DEBUG
+            if (Environment.GetCommandLineArgs().Any(
+                argument => string.Equals(argument, "--preview", StringComparison.OrdinalIgnoreCase)))
+            {
+                PreviewScreens.Run();
+                return;
+            }
+#endif
+
             var appData = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "LanBridge");
