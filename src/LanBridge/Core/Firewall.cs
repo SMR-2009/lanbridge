@@ -31,6 +31,17 @@ namespace LanBridge.Core
             return exitCode == 0 && output.IndexOf(RuleName, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
+        public static bool IsRulePresentFor(string exePath)
+        {
+            if (string.IsNullOrWhiteSpace(exePath)) return false;
+
+            var exitCode = RunNetsh(
+                "advfirewall firewall show rule name=\"" + RuleName + "\" verbose",
+                out var output);
+            return exitCode == 0 &&
+                   output.IndexOf(exePath, StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
         public static Task<bool> AddRuleAsync(string exePath)
         {
             var arguments = BuildAddRuleArguments(exePath);

@@ -2,6 +2,26 @@
 
 All notable changes to LanBridge are documented here. The format is based on Keep a Changelog, and this project uses semantic versioning.
 
+## [0.1.1] - 2026-11-26
+
+### Fixed
+
+- The one-line installer now resolves the latest release through the GitHub API, forces TLS 1.2 before downloading, never calls `exit`, and prints one clear failure instead of a raw PowerShell stack.
+- The installer refuses to overwrite a running LanBridge and verifies that the downloaded checksum and local source files exist before copying.
+- The firewall rule is checked against the installed executable's path, so a stale rule from an older folder cannot cause repeated firewall prompts.
+- The installer reports a firewall or shortcut failure as a warning without aborting a successful install.
+
+### Added
+
+- Drag files onto the device list or its window to start a send.
+- Unhandled UI exceptions are logged and shown as a short dialog instead of silently killing the tray app.
+- Zero-byte and non-ASCII receive tests.
+- CI parses install, uninstall, and build scripts before publishing.
+
+### Changed
+
+- The README is now a full install, pairing, security, troubleshooting, and development guide with real screenshots.
+
 ## [0.1.0] - 2026-11-26
 
 ### Added

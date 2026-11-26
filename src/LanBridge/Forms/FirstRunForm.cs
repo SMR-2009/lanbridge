@@ -115,7 +115,7 @@ namespace LanBridge
             };
             Controls.Add(_startWithWindows);
 
-            var firewallRulePresent = Firewall.IsRulePresent();
+            var firewallRulePresent = Firewall.IsRulePresentFor(Application.ExecutablePath);
             _firewall = new CheckBox
             {
                 Text = firewallRulePresent
