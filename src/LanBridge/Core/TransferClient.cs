@@ -259,6 +259,9 @@ namespace LanBridge.Core
             var files = BuildFiles(filePaths);
             ClientSession session = null;
             var completed = 0;
+            IProgress<TransferProgress> progress = null;
+            var transferCompleted = false;
+            var failureCode = "cancelled";
 
             try
             {
@@ -311,7 +314,7 @@ namespace LanBridge.Core
                 if (decision.Type != FrameType.Accept)
                     return TransferResult.Fail("offer_rejected", 0, files.Count);
 
-                var progress = _prompter.CreateSendProgress(offer, cancellationToken);
+                progress = _prompter.CreateSendProgress(offer, cancellationToken);
 
                 for (var index = 0; index < files.Count; index++)
                 {
@@ -380,6 +383,7 @@ namespace LanBridge.Core
                     }
                     catch (TimeoutException)
                     {
+                        failureCode = "timeout";
                         return TransferResult.Fail("timeout", completed, files.Count);
                     }
 
@@ -402,18 +406,21 @@ namespace LanBridge.Core
                     {
                         var error = ProtocolJson.Deserialize<FileErrorDto>(resultFrame.Payload);
                         _log.Info("Receiver rejected " + file.Name + ": " + Sanitizer.SanitizeLogValue(error.Code));
+                        failureCode = "transfer_failed";
                         return TransferResult.Fail("transfer_failed", completed, files.Count);
                     }
 
                     if (resultFrame.Type == FrameType.Error)
                     {
                         var error = ProtocolJson.Deserialize<ErrorDto>(resultFrame.Payload);
+                        failureCode = error.Code;
                         return TransferResult.Fail(
                             error.Code,
                             error.Completed > 0 ? error.Completed : completed,
                             files.Count);
                     }
 
+                    failureCode = "transfer_failed";
                     return TransferResult.Fail("transfer_failed", completed, files.Count);
                 }
 
@@ -427,18 +434,24 @@ namespace LanBridge.Core
                     _options.ControlTimeout,
                     cancellationToken).ConfigureAwait(false);
                 if (done.Type != FrameType.DoneAck)
+                {
+                    failureCode = "transfer_failed";
                     return TransferResult.Fail("done_failed", completed, files.Count);
+                }
 
+                transferCompleted = true;
                 return TransferResult.Ok(completed, files.Count);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 if (session != null) await SendCancelAsync(session.Stream).ConfigureAwait(false);
+                failureCode = "cancelled";
                 return TransferResult.Fail("cancelled", completed, files.Count);
             }
             catch (ProtocolException ex)
             {
                 _log.Info("Send to " + peer.Name + " failed: " + Sanitizer.SanitizeLogValue(ex.Code));
+                failureCode = ex.Code;
                 return TransferResult.Fail(ex.Code, completed, files.Count);
             }
             catch (Exception ex) when (
@@ -448,10 +461,20 @@ namespace LanBridge.Core
                 ex is TimeoutException)
             {
                 _log.Info("Send to " + peer.Name + " failed: " + ex.GetType().Name + ": " + Sanitizer.SanitizeLogValue(ex.Message));
-                return TransferResult.Fail(ex is TimeoutException ? "timeout" : "transfer_failed", completed, files.Count);
+                failureCode = ex is TimeoutException ? "timeout" : "transfer_failed";
+                return TransferResult.Fail(failureCode, completed, files.Count);
             }
             finally
             {
+                if (progress != null && !transferCompleted)
+                {
+                    progress.Report(new TransferProgress
+                    {
+                        Failed = true,
+                        ErrorCode = failureCode
+                    });
+                }
+
                 session?.Dispose();
             }
         }

@@ -445,6 +445,9 @@ namespace LanBridge.Core
             }
 
             var completed = 0;
+            IProgress<TransferProgress> progress = null;
+            var transferCompleted = false;
+            var failureCode = "cancelled";
             try
             {
                 Frame offerFrame;
@@ -524,7 +527,7 @@ namespace LanBridge.Core
                 }
 
                 await WriteJsonAsync(ssl, FrameType.Accept, new AcceptDto { TransferId = offer.TransferId }, cancellationToken).ConfigureAwait(false);
-                var progress = _prompter.CreateReceiveProgress(offer, cancellationToken);
+                progress = _prompter.CreateReceiveProgress(offer, cancellationToken);
 
                 for (var index = 0; index < files.Count; index++)
                 {
@@ -640,6 +643,7 @@ namespace LanBridge.Core
                     catch (Exception ex) when (!(ex is OperationCanceledException))
                     {
                         receiver.Abort();
+                        failureCode = "transfer_failed";
                         _log.Warn("File receive failed: " + Sanitizer.SanitizeLogValue(ex.Message));
                         await SendFileErrorAsync(ssl, index, "write_failed", cancellationToken).ConfigureAwait(false);
                         await SendErrorAsync(ssl, "transfer_failed", cancellationToken, index, completed).ConfigureAwait(false);
@@ -659,16 +663,28 @@ namespace LanBridge.Core
                 }
 
                 await WriteJsonAsync(ssl, FrameType.DoneAck, new DoneAckDto { TransferId = offer.TransferId }, cancellationToken).ConfigureAwait(false);
+                transferCompleted = true;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                failureCode = "cancelled";
             }
             catch (Exception ex)
             {
+                failureCode = "transfer_failed";
                 _log.Warn("Send failed: " + ex.GetType().Name + ": " + Sanitizer.SanitizeLogValue(ex.Message));
             }
             finally
             {
+                if (progress != null && !transferCompleted)
+                {
+                    progress.Report(new TransferProgress
+                    {
+                        Failed = true,
+                        ErrorCode = failureCode
+                    });
+                }
+
                 Interlocked.Exchange(ref _receiving, 0);
             }
         }

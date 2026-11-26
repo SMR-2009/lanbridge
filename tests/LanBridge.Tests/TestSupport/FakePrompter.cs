@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using LanBridge.Core;
@@ -11,6 +12,8 @@ namespace LanBridge.Tests
         private readonly List<TransferOffer> _offers = new List<TransferOffer>();
         private readonly List<PairingCodePrompt> _codePrompts = new List<PairingCodePrompt>();
         private readonly List<PairingRequest> _approvalRequests = new List<PairingRequest>();
+        private readonly List<CollectingProgress> _receiveProgress = new List<CollectingProgress>();
+        private readonly List<CollectingProgress> _sendProgress = new List<CollectingProgress>();
         private int _closeCount;
 
         public bool ApprovePairing { get; set; } = true;
@@ -35,6 +38,28 @@ namespace LanBridge.Tests
         public IReadOnlyList<PairingRequest> ApprovalRequests
         {
             get { lock (_approvalRequests) return _approvalRequests.ToArray(); }
+        }
+
+        public IReadOnlyList<TransferProgress> ReceiveProgressEvents
+        {
+            get
+            {
+                lock (_receiveProgress)
+                {
+                    return _receiveProgress.SelectMany(progress => progress.Items).ToArray();
+                }
+            }
+        }
+
+        public IReadOnlyList<TransferProgress> SendProgressEvents
+        {
+            get
+            {
+                lock (_sendProgress)
+                {
+                    return _sendProgress.SelectMany(progress => progress.Items).ToArray();
+                }
+            }
         }
 
         public Task<bool> RequestPairingApprovalAsync(PairingRequest request, CancellationToken cancellationToken)
@@ -70,7 +95,9 @@ namespace LanBridge.Tests
 
         public IProgress<TransferProgress> CreateReceiveProgress(TransferOffer offer, CancellationToken cancellationToken)
         {
-            return new CollectingProgress();
+            var progress = new CollectingProgress();
+            lock (_receiveProgress) _receiveProgress.Add(progress);
+            return progress;
         }
 
         public Task<string> RequestPairingCodeAsync(PairingCodePrompt prompt, CancellationToken cancellationToken)
@@ -89,7 +116,9 @@ namespace LanBridge.Tests
 
         public IProgress<TransferProgress> CreateSendProgress(TransferOffer offer, CancellationToken cancellationToken)
         {
-            return new CollectingProgress();
+            var progress = new CollectingProgress();
+            lock (_sendProgress) _sendProgress.Add(progress);
+            return progress;
         }
     }
 }
