@@ -314,6 +314,8 @@ namespace LanBridge.Core
                 if (decision.Type != FrameType.Accept)
                     return TransferResult.Fail("offer_rejected", 0, files.Count);
 
+                _log.Info("Send accepted by " + Sanitizer.SanitizeLogValue(peer.Name)
+                    + ": " + files.Count + " file(s), " + offer.TotalSize + " bytes.");
                 progress = _prompter.CreateSendProgress(offer, cancellationToken);
 
                 for (var index = 0; index < files.Count; index++)
@@ -444,6 +446,8 @@ namespace LanBridge.Core
                 }
 
                 transferCompleted = true;
+                _log.Info("Send completed to " + Sanitizer.SanitizeLogValue(peer.Name)
+                    + ": " + completed + " file(s).");
                 return TransferResult.Ok(completed, files.Count);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

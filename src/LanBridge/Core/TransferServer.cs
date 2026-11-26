@@ -413,8 +413,11 @@ namespace LanBridge.Core
             }
             finally
             {
-                _prompter.ClosePairingCode();
+                // Release the pairing gate before closing the UI dialog.
+                // The close notification is observable by callers (and tests),
+                // and a second pairing attempt must not race the release.
                 _pairingLock.Release();
+                _prompter.ClosePairingCode();
             }
         }
 
@@ -489,6 +492,9 @@ namespace LanBridge.Core
                     return;
                 }
 
+                _log.Info("Incoming offer from " + Sanitizer.SanitizeLogValue(hello.Name)
+                    + ": " + files.Count + " file(s), " + total + " bytes.");
+
                 var folder = _receiveFolder();
                 Directory.CreateDirectory(folder);
                 if (!HasFreeSpace(folder, total))
@@ -530,6 +536,7 @@ namespace LanBridge.Core
                 }
 
                 await WriteJsonAsync(ssl, FrameType.Accept, new AcceptDto { TransferId = offer.TransferId }, cancellationToken).ConfigureAwait(false);
+                _log.Info("Incoming transfer accepted from " + Sanitizer.SanitizeLogValue(hello.Name) + ".");
                 progress = _prompter.CreateReceiveProgress(offer, cancellationToken);
 
                 var fileBuffer = new byte[FrameCodec.MaxFileDataPayload];
@@ -671,6 +678,7 @@ namespace LanBridge.Core
 
                 await WriteJsonAsync(ssl, FrameType.DoneAck, new DoneAckDto { TransferId = offer.TransferId }, cancellationToken).ConfigureAwait(false);
                 transferCompleted = true;
+                _log.Info("Incoming transfer completed from " + Sanitizer.SanitizeLogValue(hello.Name) + ".");
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -690,6 +698,12 @@ namespace LanBridge.Core
                         Failed = true,
                         ErrorCode = failureCode
                     });
+                }
+
+                if (!transferCompleted)
+                {
+                    _log.Info("Incoming transfer ended from " + Sanitizer.SanitizeLogValue(hello.Name)
+                        + ": " + Sanitizer.SanitizeLogValue(failureCode));
                 }
 
                 Interlocked.Exchange(ref _receiving, 0);

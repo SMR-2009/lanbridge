@@ -31,6 +31,8 @@ namespace LanBridge
             var configPath = Path.Combine(appData, "config.json");
             var logPath = Path.Combine(appData, "lanbridge.log");
             var log = new FileLogger(logPath);
+            log.Info("LanBridge " + typeof(Program).Assembly.GetName().Version
+                + " starting on " + Environment.OSVersion.VersionString);
 
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
             Application.ThreadException += (sender, args) =>
@@ -72,6 +74,11 @@ namespace LanBridge
                 var config = firstRun
                     ? AppConfig.CreateDefault()
                     : AppConfig.Load(configPath, log);
+
+                log.Info("Device name=" + Sanitizer.SanitizeLogValue(config.DeviceName)
+                    + "; discoverable=" + config.Discoverable
+                    + "; auto-accept=" + config.AutoAcceptFromPaired
+                    + "; first-run=" + firstRun);
 
                 if (!firstRun)
                 {
@@ -171,6 +178,7 @@ namespace LanBridge
             }
             finally
             {
+                log.Info("LanBridge stopping.");
                 identity?.Dispose();
                 log.Dispose();
                 try { mutex.ReleaseMutex(); } catch { }

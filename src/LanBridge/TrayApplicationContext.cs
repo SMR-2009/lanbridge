@@ -89,6 +89,16 @@ namespace LanBridge
                 Discoverable = _config.Discoverable
             };
 
+            _discovery.DeviceConfirmed += device =>
+            {
+                _log.Info("Device found: " + Sanitizer.SanitizeLogValue(device.Name)
+                    + " at " + device.IPAddress + ":" + device.Port);
+            };
+            _discovery.DeviceLost += device =>
+            {
+                _log.Info("Device lost: " + Sanitizer.SanitizeLogValue(device.Name));
+            };
+
             _server.DevicePaired += record =>
             {
                 _log.Info("Paired with " + Sanitizer.SanitizeLogValue(record.Name));
@@ -148,8 +158,12 @@ namespace LanBridge
         {
             if (!TryCreateEndpoint(row, out var endpoint))
             {
+                _log.Warn("Pairing requested without an endpoint for " + Sanitizer.SanitizeLogValue(row?.Name));
                 return Task.FromResult(PairingAttemptResult.Fail("no_endpoint"));
             }
+
+            _log.Info("Pairing requested with " + Sanitizer.SanitizeLogValue(row.Name)
+                + " at " + endpoint.Address + ":" + endpoint.Port);
             return _client.PairAsync(endpoint);
         }
 
@@ -161,9 +175,14 @@ namespace LanBridge
 
             _sending = true;
             _outboundCts = new CancellationTokenSource();
+            _log.Info("Send requested to " + Sanitizer.SanitizeLogValue(row.Name)
+                + ": " + files.Count + " file(s)");
             try
             {
-                return await _client.SendAsync(endpoint, files, _outboundCts.Token);
+                var result = await _client.SendAsync(endpoint, files, _outboundCts.Token);
+                _log.Info("Send to " + Sanitizer.SanitizeLogValue(row.Name)
+                    + (result.Success ? " completed." : " ended: " + Sanitizer.SanitizeLogValue(result.ErrorCode)));
+                return result;
             }
             finally
             {
@@ -312,7 +331,7 @@ namespace LanBridge
                 return;
             }
 
-            _deviceList = new DeviceListForm(this, files);
+            _deviceList = new DeviceListForm(this, files, _log);
             _deviceList.FormClosed += (s, e) => _deviceList = null;
             _deviceList.Show();
             _deviceList.Activate();
@@ -345,6 +364,7 @@ namespace LanBridge
 
         private void OpenSettings()
         {
+            _log.Info("Settings opened.");
             var logPath = Path.Combine(
                 Path.GetDirectoryName(_configPath) ?? string.Empty,
                 "lanbridge.log");

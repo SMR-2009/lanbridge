@@ -2,6 +2,20 @@
 
 All notable changes to LanBridge are documented here. The format is based on Keep a Changelog, and this project uses semantic versioning.
 
+## [0.1.6] - 2026-11-26
+
+### Fixed
+
+- The device list now uses a table layout for its status strip and list, so the column header row is no longer clipped at the top.
+- Column widths are recalculated with the window width, keeping Device, Status, Address, and Last seen readable.
+- The header subtitle and title use a layout that does not overlap at different window sizes.
+
+### Added
+
+- Diagnostics for startup, device discovery/loss, pairing phases, transfer start/accept/completion/failure, device actions, and UI-thread stalls.
+- UI-thread heartbeat warnings in `lanbridge.log` if the message loop stops responding.
+- Device names are shown as tooltips when a row is narrow.
+
 ## [0.1.5] - 2026-11-26
 
 ### Fixed
