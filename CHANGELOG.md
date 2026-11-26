@@ -2,6 +2,13 @@
 
 All notable changes to LanBridge are documented here. The format is based on Keep a Changelog, and this project uses semantic versioning.
 
+## [0.1.3] - 2026-11-26
+
+### Added
+
+- Startup removes stale `.part` files older than one hour from the receive folder.
+- The About window falls back to the application product version if the assembly version is unavailable.
+
 ## [0.1.2] - 2026-11-26
 
 ### Added

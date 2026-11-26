@@ -40,7 +40,7 @@ namespace LanBridge
             header.Controls.Add(title);
 
             var assemblyVersion = typeof(AboutForm).Assembly.GetName().Version;
-            var displayVersion = assemblyVersion == null ? "0.1.1" : assemblyVersion.ToString(3);
+            var displayVersion = assemblyVersion == null ? Application.ProductVersion : assemblyVersion.ToString(3);
             var version = new Label
             {
                 Text = "Version " + displayVersion + "  •  MIT license",
