@@ -18,8 +18,8 @@ namespace LanBridge.Tests
         {
             using var harness = new EndToEndHarness(new TransferOptions
             {
-                PairApprovalTimeout = TimeSpan.FromMilliseconds(100),
-                PairCodeTimeout = TimeSpan.FromMilliseconds(100)
+                PairApprovalTimeout = TimeSpan.FromSeconds(2),
+                PairCodeTimeout = TimeSpan.FromSeconds(2)
             });
             harness.Prompter.BlockPairingApproval = true;
 

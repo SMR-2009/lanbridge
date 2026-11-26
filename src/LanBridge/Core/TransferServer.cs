@@ -413,8 +413,11 @@ namespace LanBridge.Core
             }
             finally
             {
-                _prompter.ClosePairingCode();
+                // Release the pairing gate before closing the UI dialog.
+                // The close notification is observable by callers (and tests),
+                // and a second pairing attempt must not race the release.
                 _pairingLock.Release();
+                _prompter.ClosePairingCode();
             }
         }
 
