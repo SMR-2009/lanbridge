@@ -1,0 +1,75 @@
+name: Bug report
+description: Something went wrong with LanBridge
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Do not include pairing codes, private keys, or files you did not intend to share.
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: Run `winver` and paste the version and build.
+      placeholder: "Windows 11 24H2 (26100.2314)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network profile
+      options:
+        - Private
+        - Public
+        - Domain
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What did you do, in order?
+      placeholder: |
+        1. Open LanBridge on both laptops
+        2. Pair from A to B
+        3. Send a 100 MB file
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log excerpt
+      description: From `%APPDATA%\LanBridge\lanbridge.log`. Remove device names and IP addresses if you prefer.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I am using the latest release
+          required: true
+        - label: Both laptops are on the same Wi-Fi or Ethernet network
+          required: false
+        - label: I have not included a pairing code or private key
+          required: true

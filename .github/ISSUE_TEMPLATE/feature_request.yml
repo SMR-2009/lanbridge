@@ -1,0 +1,43 @@
+name: Feature request
+description: Suggest an improvement for LanBridge
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        LanBridge is intentionally small and local-only. Explain the problem first; the best solutions are often smaller than the first idea.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      placeholder: "I want to send a folder without zipping it first."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like LanBridge to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      placeholder: "LocalSend, Nearby Share, a USB drive…"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Does this stay local-only?
+      options:
+        - Yes, it works entirely on the LAN
+        - No, it needs the internet or a cloud service
+        - Not sure
+    validations:
+      required: true

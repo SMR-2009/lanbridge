@@ -8,3 +8,7 @@ artifacts/
 *.pfx
 *.dpapi
 *.log
+TestResults/
+*.zip
+*.tmp
+*.nupkg
