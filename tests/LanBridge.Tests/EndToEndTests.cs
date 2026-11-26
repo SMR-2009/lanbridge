@@ -22,13 +22,17 @@ namespace LanBridge.Tests
             });
             harness.Prompter.BlockPairingApproval = true;
 
-            using (var cts = new CancellationTokenSource(80))
+            using (var cts = new CancellationTokenSource())
             {
-                await Assert.ThrowsAnyAsync<OperationCanceledException>(
-                    () => harness.Client.PairAsync(harness.Peer, cts.Token));
+                var pairing = harness.Client.PairAsync(harness.Peer, cts.Token);
+                await WaitUntilAsync(() => harness.Prompter.ApprovalRequests.Count > 0, 3000);
+                Assert.Single(harness.Prompter.ApprovalRequests);
+
+                cts.Cancel();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pairing);
             }
 
-            await WaitUntilAsync(() => harness.Prompter.CloseCount > 0, 2000);
+            await WaitUntilAsync(() => harness.Prompter.CloseCount > 0, 3000);
             Assert.True(harness.Prompter.CloseCount > 0);
 
             harness.Prompter.BlockPairingApproval = false;

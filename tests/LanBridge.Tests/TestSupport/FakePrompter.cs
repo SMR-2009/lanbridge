@@ -10,6 +10,7 @@ namespace LanBridge.Tests
     {
         private readonly List<TransferOffer> _offers = new List<TransferOffer>();
         private readonly List<PairingCodePrompt> _codePrompts = new List<PairingCodePrompt>();
+        private readonly List<PairingRequest> _approvalRequests = new List<PairingRequest>();
         private int _closeCount;
 
         public bool ApprovePairing { get; set; } = true;
@@ -31,8 +32,14 @@ namespace LanBridge.Tests
             get { lock (_codePrompts) return _codePrompts.ToArray(); }
         }
 
+        public IReadOnlyList<PairingRequest> ApprovalRequests
+        {
+            get { lock (_approvalRequests) return _approvalRequests.ToArray(); }
+        }
+
         public Task<bool> RequestPairingApprovalAsync(PairingRequest request, CancellationToken cancellationToken)
         {
+            lock (_approvalRequests) _approvalRequests.Add(request);
             if (BlockPairingApproval)
             {
                 return Task.Delay(Timeout.Infinite, cancellationToken).ContinueWith(_ =>
