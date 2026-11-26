@@ -14,6 +14,8 @@ namespace LanBridge.Tests
 
         public bool ApprovePairing { get; set; } = true;
         public bool ApproveOffers { get; set; } = true;
+        public bool BlockPairingApproval { get; set; }
+        public bool BlockPairingCode { get; set; }
         public string PairingCode { get; set; }
         public string LastCode { get; private set; }
         public int CloseCount => Volatile.Read(ref _closeCount);
@@ -30,6 +32,14 @@ namespace LanBridge.Tests
 
         public Task<bool> RequestPairingApprovalAsync(PairingRequest request, CancellationToken cancellationToken)
         {
+            if (BlockPairingApproval)
+            {
+                return Task.Delay(Timeout.Infinite, cancellationToken).ContinueWith(_ =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return true;
+                }, TaskScheduler.Default);
+            }
             return Task.FromResult(ApprovePairing);
         }
 
@@ -57,6 +67,14 @@ namespace LanBridge.Tests
         public Task<string> RequestPairingCodeAsync(PairingCodePrompt prompt, CancellationToken cancellationToken)
         {
             lock (_codePrompts) _codePrompts.Add(prompt);
+            if (BlockPairingCode)
+            {
+                return Task.Delay(Timeout.Infinite, cancellationToken).ContinueWith(_ =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return PairingCode ?? LastCode ?? "000000";
+                }, TaskScheduler.Default);
+            }
             return Task.FromResult(PairingCode ?? LastCode ?? "000000");
         }
 

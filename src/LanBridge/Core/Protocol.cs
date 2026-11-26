@@ -66,6 +66,7 @@ namespace LanBridge.Core
         [DataMember(Name = "nonce")] public string Nonce { get; set; }
         [DataMember(Name = "intent")] public string Intent { get; set; }
         [DataMember(Name = "paired")] public bool Paired { get; set; }
+        [DataMember(Name = "port")] public int Port { get; set; }
     }
 
     [DataContract]
@@ -78,6 +79,7 @@ namespace LanBridge.Core
         [DataMember(Name = "nonce")] public string Nonce { get; set; }
         [DataMember(Name = "paired")] public bool Paired { get; set; }
         [DataMember(Name = "busy")] public bool Busy { get; set; }
+        [DataMember(Name = "port")] public int Port { get; set; }
     }
 
     [DataContract]

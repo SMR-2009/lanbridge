@@ -26,6 +26,7 @@ namespace LanBridge.Core
         private readonly Func<LanScope> _scopeFactory;
         private readonly ConcurrentDictionary<TcpClient, byte> _clients = new ConcurrentDictionary<TcpClient, byte>();
 
+        private readonly SemaphoreSlim _pairingLock = new SemaphoreSlim(1, 1);
         private TcpListener _listener;
         private CancellationTokenSource _cancellation;
         private Task _acceptLoop;
@@ -168,15 +169,17 @@ namespace LanBridge.Core
                         return;
                     }
 
+                    var serverNonce = NewNonceBytes();
                     var ack = new HelloAckDto
                     {
                         V = 1,
                         Id = _identity.DeviceId,
                         Name = _deviceName,
                         Fp = _identity.Fingerprint,
-                        Nonce = NewNonce(),
+                        Nonce = Convert.ToBase64String(serverNonce),
                         Paired = _peers.ContainsFingerprint(clientFingerprint),
-                        Busy = IsReceiving
+                        Busy = IsReceiving,
+                        Port = _port
                     };
                     await WriteJsonAsync(ssl, FrameType.HelloAck, ack, cancellationToken).ConfigureAwait(false);
 
@@ -198,6 +201,12 @@ namespace LanBridge.Core
                         return;
                     }
 
+                    if (hello.Intent == "pair")
+                    {
+                        await HandlePairAsync(ssl, hello, clientFingerprint, remote, serverNonce, cancellationToken).ConfigureAwait(false);
+                        return;
+                    }
+
                     await SendErrorAsync(ssl, "not_implemented", cancellationToken).ConfigureAwait(false);
                 }
             }
@@ -213,6 +222,180 @@ namespace LanBridge.Core
                 _clients.TryRemove(client, out _);
                 try { client.Close(); } catch { }
             }
+        }
+
+        private async Task HandlePairAsync(
+            SslStream ssl,
+            HelloDto hello,
+            string clientFingerprint,
+            IPAddress remote,
+            byte[] serverNonce,
+            CancellationToken cancellationToken)
+        {
+            if (!Discoverable && !_peers.ContainsFingerprint(clientFingerprint))
+            {
+                await SendPairDenyAsync(ssl, "hidden", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            if (!await _pairingLock.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+            {
+                await SendPairDenyAsync(ssl, "busy", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            try
+            {
+                var peer = new PeerEndpoint(
+                    remote,
+                    hello.Port > 0 ? hello.Port : _port,
+                    clientFingerprint,
+                    hello.Id,
+                    hello.Name);
+
+                bool approved;
+                using (var approvalCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+                {
+                    approvalCts.CancelAfter(_options.PairApprovalTimeout);
+                    try
+                    {
+                        approved = await _prompter.RequestPairingApprovalAsync(
+                            new PairingRequest(peer),
+                            approvalCts.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        await SendPairDenyAsync(ssl, "timeout", cancellationToken).ConfigureAwait(false);
+                        return;
+                    }
+                }
+
+                if (!approved)
+                {
+                    await SendPairDenyAsync(ssl, "denied", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                byte[] clientNonce;
+                try
+                {
+                    clientNonce = Convert.FromBase64String(hello.Nonce ?? string.Empty);
+                }
+                catch (FormatException)
+                {
+                    await SendPairDenyAsync(ssl, "invalid", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                var code = PairingCode.Compute(
+                    clientFingerprint,
+                    _identity.Fingerprint,
+                    clientNonce,
+                    serverNonce);
+                _prompter.ShowPairingCode(new PairingCodeDisplay(peer, code, _options.PairCodeTimeout));
+
+                await WriteJsonAsync(
+                    ssl,
+                    FrameType.PairPrompt,
+                    new PairPromptDto
+                    {
+                        ExpiresSeconds = Math.Max(1, (int)_options.PairCodeTimeout.TotalSeconds)
+                    },
+                    cancellationToken).ConfigureAwait(false);
+
+                Frame proofFrame;
+                using (var codeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+                {
+                    codeCts.CancelAfter(_options.PairCodeTimeout);
+                    try
+                    {
+                        proofFrame = await TimeoutIo.ReadFrameAsync(
+                            ssl,
+                            _options.PairCodeTimeout,
+                            codeCts.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        await SendPairDenyAsync(ssl, "timeout", cancellationToken).ConfigureAwait(false);
+                        return;
+                    }
+                }
+
+                if (proofFrame.Type == FrameType.PairAbort || proofFrame.Type != FrameType.PairProof)
+                {
+                    await SendPairDenyAsync(ssl, "invalid", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                PairProofDto proofDto;
+                try
+                {
+                    proofDto = ProtocolJson.Deserialize<PairProofDto>(proofFrame.Payload);
+                }
+                catch (ProtocolException)
+                {
+                    await SendPairDenyAsync(ssl, "invalid", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                byte[] proof;
+                try
+                {
+                    proof = Convert.FromBase64String(proofDto.Proof ?? string.Empty);
+                }
+                catch (FormatException)
+                {
+                    await SendPairDenyAsync(ssl, "invalid", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                if (!PairingCode.VerifyProof(
+                    code,
+                    clientNonce,
+                    serverNonce,
+                    clientFingerprint,
+                    _identity.Fingerprint,
+                    proof))
+                {
+                    await SendPairDenyAsync(ssl, "invalid", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                var record = new PeerRecord
+                {
+                    Fingerprint = clientFingerprint,
+                    DeviceId = hello.Id ?? string.Empty,
+                    Name = Sanitizer.SanitizeDeviceName(hello.Name),
+                    LastIp = remote.ToString(),
+                    LastPort = hello.Port > 0 ? hello.Port : _port,
+                    PairedAtUtc = DateTime.UtcNow,
+                    LastSeenUtc = DateTime.UtcNow
+                };
+                _peers.Upsert(record);
+                _peers.Save();
+                DevicePaired?.Invoke(record);
+
+                await TimeoutIo.WriteFrameAsync(
+                    ssl,
+                    FrameType.PairOk,
+                    Array.Empty<byte>(),
+                    _options.ControlTimeout,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                _prompter.ClosePairingCode();
+                _pairingLock.Release();
+            }
+        }
+
+        private async Task SendPairDenyAsync(SslStream ssl, string reason, CancellationToken cancellationToken)
+        {
+            await WriteJsonAsync(
+                ssl,
+                FrameType.PairDeny,
+                new PairDenyDto { Reason = reason },
+                cancellationToken).ConfigureAwait(false);
         }
 
         private bool IsRemoteAllowed(IPAddress remote)
@@ -237,11 +420,11 @@ namespace LanBridge.Core
                 cancellationToken).ConfigureAwait(false);
         }
 
-        private static string NewNonce()
+        private static byte[] NewNonceBytes()
         {
             var nonce = new byte[16];
             using (var random = RandomNumberGenerator.Create()) random.GetBytes(nonce);
-            return Convert.ToBase64String(nonce);
+            return nonce;
         }
 
         public void Stop()
