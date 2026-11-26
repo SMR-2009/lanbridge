@@ -39,9 +39,11 @@ namespace LanBridge
             };
             header.Controls.Add(title);
 
+            var assemblyVersion = typeof(AboutForm).Assembly.GetName().Version;
+            var displayVersion = assemblyVersion == null ? "0.1.1" : assemblyVersion.ToString(3);
             var version = new Label
             {
-                Text = "Version 0.1.0  •  MIT license",
+                Text = "Version " + displayVersion + "  •  MIT license",
                 ForeColor = Color.FromArgb(203, 213, 225),
                 Font = new Font("Segoe UI", 9.5f),
                 AutoSize = true,

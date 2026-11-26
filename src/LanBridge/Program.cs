@@ -94,7 +94,7 @@ namespace LanBridge
                         log.Warn("Could not change startup: " + ex.Message);
                     }
 
-                    if (addFirewallRule && !Firewall.IsRulePresent())
+                    if (addFirewallRule && !Firewall.IsRulePresentFor(Application.ExecutablePath))
                     {
                         bool added;
                         try

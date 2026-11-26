@@ -12,7 +12,7 @@
 
 No account. No cloud. No cable. Pair once with a six-digit code, then use the tray menu.
 
-> **Status:** early `0.1.0`. The core flow is tested; expect rough edges. Security reports are welcome.
+> **Status:** early `0.1.1`. The core flow is tested; expect rough edges. Security reports are welcome.
 
 ## Install
 
@@ -36,7 +36,7 @@ No admin rights are needed for normal use. If you decline the firewall prompt, o
 
 ### Manual download
 
-Download `lanbridge-v0.1.0-win.zip` or `LanBridge.exe` from the [latest release](https://github.com/SMR-2009/lanbridge/releases/latest). Extract the zip, then run `install.ps1` from that folder:
+Download `lanbridge-v0.1.1-win.zip` or `LanBridge.exe` from the [latest release](https://github.com/SMR-2009/lanbridge/releases/latest). Extract the zip, then run `install.ps1` from that folder:
 
 ```powershell
 .\install.ps1 -SourceDir .
@@ -149,7 +149,7 @@ Windows requires administrator approval to create an inbound firewall rule. LanB
 | “Identity changed” after a reinstall | That is the pin doing its job. Unpair the old entry, then pair again with a new code. |
 | The transfer is refused as “not reachable” | Windows Firewall may be blocking the app. Open **Settings → Repair firewall rule** and approve the UAC prompt. |
 | I get a UAC prompt every launch | Use the installed copy; the rule is tied to its path. Repair it once from Settings if needed. |
-| SmartScreen warns on first launch | The 0.1.0 exe is not code-signed. Verify the SHA-256 from the release page, or build it yourself. |
+| SmartScreen warns on first launch | The 0.1.x exe is not code-signed. Verify the SHA-256 from the release page, or build it yourself. |
 | Sending and receiving at once | Allowed: one inbound and one outbound transfer can run together. A second inbound or outbound transfer is refused as busy. |
 | I want to be invisible to discovery | Turn off **Visible on this network**. Paired devices can still send to the last known endpoint. |
 
@@ -159,7 +159,7 @@ Logs are at `%APPDATA%\LanBridge\lanbridge.log`. They contain device names, IP a
 
 **Does the app need the internet?** Only the installer does. After installation, transfers are local.
 
-**Can I send to a phone or Mac?** Not with LanBridge 0.1.0. [LocalSend](https://localsend.org) covers Windows, macOS, Linux, Android, and iOS.
+**Can I send to a phone or Mac?** Not with LanBridge 0.1.x. [LocalSend](https://localsend.org) covers Windows, macOS, Linux, Android, and iOS.
 
 **Can I send a folder?** Zip it first. Folder-as-one-unit transfer is not implemented yet.
 

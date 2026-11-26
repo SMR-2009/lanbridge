@@ -250,9 +250,9 @@ try {
     }
 
     if (-not $NoFirewall) {
-        $existingRule = & netsh.exe advfirewall firewall show rule name=LanBridge 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Step "Windows Firewall rule already present"
+        $existingRule = (& netsh.exe advfirewall firewall show rule name=LanBridge verbose 2>$null) -join "`n"
+        if ($LASTEXITCODE -eq 0 -and $existingRule -match [regex]::Escape($target)) {
+            Write-Step "Windows Firewall rule already present for this path"
         }
         else {
             Write-Step "Adding the Windows Firewall rule (one UAC prompt)"
