@@ -227,7 +227,7 @@ namespace LanBridge.Core
                         return;
                     }
 
-                    await SendErrorAsync(ssl, "not_implemented", cancellationToken).ConfigureAwait(false);
+                    await SendErrorAsync(ssl, "bad_intent", cancellationToken).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

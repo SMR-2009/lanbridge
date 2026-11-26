@@ -17,7 +17,7 @@ namespace LanBridge
 
         public AppConfig Config => _config;
         public bool StartWithWindows => _startWithWindows.Checked;
-        public bool AddFirewallRule => _firewall.Checked;
+        public bool AddFirewallRule => _firewall.Checked && _firewall.Enabled;
 
         public FirstRunForm(AppConfig config)
         {
@@ -115,26 +115,32 @@ namespace LanBridge
             };
             Controls.Add(_startWithWindows);
 
+            var firewallRulePresent = Firewall.IsRulePresent();
             _firewall = new CheckBox
             {
-                Text = "Allow LanBridge through Windows Firewall",
+                Text = firewallRulePresent
+                    ? "Windows Firewall is already configured"
+                    : "Allow LanBridge through Windows Firewall",
                 Checked = true,
+                Enabled = !firewallRulePresent,
                 AutoSize = true,
                 ForeColor = Color.FromArgb(51, 65, 85),
                 Location = new Point(24, 300)
             };
             Controls.Add(_firewall);
 
-            var note = new Label
+            var firewallNote = new Label
             {
-                Text = "Windows will ask for permission once. The firewall rule is limited to your local network.",
+                Text = firewallRulePresent
+                    ? "The installer already added the rule. This setup will not ask for administrator permission."
+                    : "Windows will ask for permission once (UAC). The rule is limited to your local network. You can skip it and repair it later in Settings.",
                 ForeColor = Color.FromArgb(100, 116, 139),
                 Font = new Font("Segoe UI", 9f),
                 AutoSize = false,
                 Size = new Size(516, 36),
                 Location = new Point(24, 332)
             };
-            Controls.Add(note);
+            Controls.Add(firewallNote);
 
             _error = new Label
             {

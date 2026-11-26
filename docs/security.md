@@ -50,7 +50,7 @@ This is a guard against accidental exposure, not a firewall against a hostile lo
 
 ### Firewall
 
-The optional first-run step adds a Windows Defender Firewall rule scoped to the LanBridge executable, applies to Private and Public profiles, and limits remote addresses to `LocalSubnet`. The rule is created with `netsh` and a UAC prompt. Declining UAC leaves the app working for outbound sends but blocks inbound connections until the rule is repaired from Settings.
+The installer adds a Windows Defender Firewall rule scoped to the installed executable, applies to Private and Public profiles, and limits remote addresses to `LocalSubnet`. This is the one expected UAC prompt; if the rule already exists, the installer skips it. First-run setup checks for the rule and does not ask again. Declining UAC leaves the app working for outbound sends but blocks inbound connections until the rule is repaired from Settings. The rule is tied to the executable path, so running a different copy of `LanBridge.exe` is a different program to Windows Firewall.
 
 Windows often classifies a home Wi-Fi network as Public. The rule deliberately works on Public as well, because otherwise inbound transfers would fail on a correctly configured home network. If you do not trust the network, turn on **Visible on this network** off and disconnect.
 

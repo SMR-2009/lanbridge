@@ -21,7 +21,7 @@ On **both** laptops, open PowerShell and run:
 irm https://github.com/SMR-2009/lanbridge/releases/latest/download/install.ps1 | iex
 ```
 
-The installer downloads the release, verifies its SHA-256, installs per-user to `%LOCALAPPDATA%\Programs\LanBridge`, adds a Start Menu shortcut, and launches the app. No admin rights are needed for normal use. The first-run setup asks for a device name and offers a one-time, scoped firewall rule; Windows will show a UAC prompt only for that firewall step.
+The installer downloads the release, verifies its SHA-256, installs per-user to `%LOCALAPPDATA%\Programs\LanBridge`, adds a Start Menu shortcut, and launches the app. No admin rights are needed for normal use. It also adds the inbound firewall rule with **one UAC prompt**, scoped to the installed exe and your local subnet. If the rule already exists, the installer skips it. If you decline the prompt, the app still works for outbound sends and setup can add the rule later.
 
 Prefer a manual download? Grab `lanbridge-v0.1.0-win.zip` or `LanBridge.exe` from the [latest release](https://github.com/SMR-2009/lanbridge/releases/latest) and compare the SHA-256 with `SHA256SUMS.txt`.
 
@@ -73,6 +73,15 @@ Received files go to `Downloads\LanBridge` by default. Change it in **Settings�
 
 Read [docs/security.md](docs/security.md) for the threat model and limitations. Report vulnerabilities privately via GitHub's Security tab; see [SECURITY.md](SECURITY.md).
 
+## Firewall and UAC
+
+LanBridge needs an inbound firewall rule to accept files. Windows requires administrator approval to create one.
+
+- The installer creates it once. If you decline the UAC prompt, first-run setup offers it once more, and **Settings → Repair firewall rule** is always available.
+- The rule is program-scoped, covers Private and Public profiles, and is limited to `RemoteIp=LocalSubnet`.
+- You should **not** see a UAC prompt every launch. If you do, you are probably launching a different `LanBridge.exe` from a different folder; Windows treats each path as a separate program. Use the installed copy at `%LOCALAPPDATA%\Programs\LanBridge\LanBridge.exe`.
+- A Windows Firewall notification is not a UAC prompt. It means the rule is missing; approve it once, or repair the rule in Settings.
+
 ## Requirements
 
 - Windows 10 1903 or later, or Windows 11.
@@ -100,6 +109,8 @@ LanBridge is deliberately narrow: two Windows laptops, one LAN, a tray menu, and
 | The other laptop never appears | Make sure both are on the same network, LanBridge is running on both, and **Visible on this network** is checked. Click **Refresh**. Guest Wi-Fi often isolates clients. |
 | The device appears but pairing fails | Check the six digits; the code expires after two minutes. Close the stale dialog and start again. |
 | The transfer is refused with “not reachable” | Windows Firewall may be blocking the app. Open **Settings → Repair firewall rule** and approve the UAC prompt. |
+| I get a UAC prompt every launch | You are likely running a different `LanBridge.exe` path. Use the installed copy; the rule is tied to its path. Repair it once from Settings if needed. |
+| Windows Firewall asks every launch | The rule was not saved. Approve the Windows prompt once, or use **Settings → Repair firewall rule**. See [Firewall and UAC](#firewall-and-uac). |
 | “Identity changed” after a reinstall | That is the pin doing its job. Unpair the old entry, then pair again with a new code. |
 | SmartScreen warns on first launch | The 0.1.0 exe is not code-signed. Verify the SHA-256 from the release page, or build it yourself. |
 | Receiving and sending at the same time | Allowed: one inbound and one outbound transfer can run together. A second inbound or outbound transfer is refused as busy. |
@@ -127,6 +138,7 @@ The test suite covers framing, TLS pinning, the pairing SAS and proof, filename 
 - [Design](docs/design.md) — product and protocol decisions, including the review gaps.
 - [Protocol](docs/protocol.md) — wire format, frame types, pairing math, timeouts.
 - [Security model](docs/security.md) — assets, adversaries, controls, limitations.
+- [Manual two-laptop checklist](docs/manual-test.md) — the release gate.
 - [Contributing](CONTRIBUTING.md) — build, tests, review expectations.
 - [Changelog](CHANGELOG.md)
 - [Code of Conduct](CODE_OF_CONDUCT.md)
