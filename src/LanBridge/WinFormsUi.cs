@@ -11,6 +11,8 @@ namespace LanBridge
         private readonly SynchronizationContext _context;
         private readonly Control _uiHost;
         private readonly int _uiThreadId;
+        private readonly System.Threading.Timer _uiHeartbeat;
+        private long _lastUiPulse;
         private readonly ILogger _log;
         private readonly Action _cancelReceive;
         private readonly Action _cancelSend;
@@ -28,6 +30,21 @@ namespace LanBridge
             _context = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
             _cancelReceive = cancelReceive;
             _cancelSend = cancelSend;
+            _log.Info("UI dispatcher initialized on thread " + _uiThreadId);
+            _lastUiPulse = Environment.TickCount;
+            _uiHeartbeat = new System.Threading.Timer(CheckUiHeartbeat, null, 5000, 5000);
+        }
+
+        private void CheckUiHeartbeat(object state)
+        {
+            var now = Environment.TickCount;
+            var elapsed = unchecked(now - Volatile.Read(ref _lastUiPulse));
+            if (elapsed > 8000)
+            {
+                _log.Warn("UI thread has not responded for " + elapsed + " ms.");
+            }
+
+            RunOnUi(() => Volatile.Write(ref _lastUiPulse, Environment.TickCount));
         }
 
         public void RunOnUi(Action action)

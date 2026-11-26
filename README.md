@@ -31,7 +31,7 @@ The installer:
 
 To skip the firewall step, run the installer with `-NoFirewall`. To skip start at sign-in, use `-NoStartup`.
 
-If you prefer a manual install, download `lanbridge-v0.1.5-win.zip` from the [latest release](https://github.com/SMR-2009/lanbridge/releases/latest), extract it, and run:
+If you prefer a manual install, download `lanbridge-v0.1.6-win.zip` from the [latest release](https://github.com/SMR-2009/lanbridge/releases/latest), extract it, and run:
 
 ```powershell
 .\install.ps1 -SourceDir .

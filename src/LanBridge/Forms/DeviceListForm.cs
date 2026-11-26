@@ -38,6 +38,7 @@ namespace LanBridge
         private readonly Timer _timer;
         private readonly Font _boldFont;
         private readonly ContextMenuStrip _menu;
+        private readonly ILogger _log;
         private readonly ToolStripMenuItem _unpairItem;
         private readonly ToolStripMenuItem _copyItem;
         private List<string> _sendFiles;
@@ -45,9 +46,10 @@ namespace LanBridge
         private int _lastSeenRefreshTick;
         private bool _busy;
 
-        public DeviceListForm(IDeviceListHost host, IReadOnlyList<string> sendFiles = null)
+        public DeviceListForm(IDeviceListHost host, IReadOnlyList<string> sendFiles = null, ILogger log = null)
         {
             _host = host ?? throw new ArgumentNullException(nameof(host));
+            _log = log ?? NullLogger.Instance;
 
             Text = "LanBridge";
             ClientSize = new Size(780, 540);
@@ -77,48 +79,76 @@ namespace LanBridge
             };
             root.Controls.Add(header, 0, 0);
 
+            var headerLayout = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(24, 12, 24, 8),
+                ColumnCount = 1,
+                RowCount = 2,
+                BackColor = Color.FromArgb(15, 23, 42)
+            };
+            headerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            headerLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42f));
+            headerLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            header.Controls.Add(headerLayout);
+
             _headerTitle = new Label
             {
                 Text = "LanBridge",
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
                 ForeColor = Color.White,
                 Font = new Font("Segoe UI Semibold", 18f, FontStyle.Bold),
-                AutoSize = true,
-                Location = new Point(24, 17)
+                AutoSize = false,
+                Margin = Padding.Empty
             };
-            header.Controls.Add(_headerTitle);
+            headerLayout.Controls.Add(_headerTitle, 0, 0);
 
             _headerSubtitle = new Label
             {
                 Text = "Secure local file transfer",
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.TopLeft,
                 ForeColor = Color.FromArgb(203, 213, 225),
                 Font = new Font("Segoe UI", 9.5f),
                 AutoSize = false,
-                Size = new Size(560, 22),
-                Location = new Point(24, 52)
+                Margin = Padding.Empty
             };
-            header.Controls.Add(_headerSubtitle);
+            headerLayout.Controls.Add(_headerSubtitle, 0, 1);
 
-            var body = new Panel
+            var body = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 Margin = Padding.Empty,
-                Padding = new Padding(24, 10, 24, 10),
+                Padding = new Padding(24, 8, 24, 8),
+                ColumnCount = 1,
+                RowCount = 2,
                 BackColor = Color.FromArgb(248, 250, 252)
             };
+            body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            body.RowStyles.Add(new RowStyle(SizeType.Absolute, 32f));
+            body.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
             root.Controls.Add(body, 0, 1);
 
             _status = new Label
             {
-                Dock = DockStyle.Top,
-                Height = 30,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 0, 0, 6),
                 ForeColor = Color.FromArgb(71, 85, 105),
                 Font = new Font("Segoe UI", 9f),
-                TextAlign = ContentAlignment.MiddleLeft
+                TextAlign = ContentAlignment.MiddleLeft,
+                AutoEllipsis = true
             };
-            body.Controls.Add(_status);
+            body.Controls.Add(_status, 0, 0);
 
-            var listPanel = new Panel { Dock = DockStyle.Fill };
-            body.Controls.Add(listPanel);
+            var listPanel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Margin = Padding.Empty,
+                Padding = new Padding(1),
+                BackColor = Color.FromArgb(203, 213, 225)
+            };
+            body.Controls.Add(listPanel, 0, 1);
 
             _list = new ListView
             {
@@ -128,14 +158,16 @@ namespace LanBridge
                 HideSelection = false,
                 MultiSelect = false,
                 GridLines = false,
-                BorderStyle = BorderStyle.FixedSingle,
+                BorderStyle = BorderStyle.None,
                 HeaderStyle = ColumnHeaderStyle.Nonclickable,
-                Font = new Font("Segoe UI", 9.5f)
+                Font = new Font("Segoe UI", 9.5f),
+                ShowItemToolTips = true
             };
             _list.Columns.Add("Device", 280);
             _list.Columns.Add("Status", 120);
             _list.Columns.Add("Address", 170);
             _list.Columns.Add("Last seen", 140);
+            _list.Resize += (s, e) => ResizeColumns();
             _list.SelectedIndexChanged += (s, e) => UpdatePrimary();
             _list.DoubleClick += async (s, e) => await PrimaryActionAsync();
             _list.MouseDown += (s, e) =>
@@ -236,6 +268,7 @@ namespace LanBridge
             _timer.Tick += (s, e) => RefreshRows(false);
             _timer.Start();
 
+            ResizeColumns();
             SetSendFiles(sendFiles);
             RefreshRows(true);
         }
@@ -324,6 +357,7 @@ namespace LanBridge
             }
             catch (Exception ex)
             {
+                _log.Error("Device list action failed", ex);
                 MessageBox.Show(this, ex.Message, "LanBridge", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
@@ -366,7 +400,7 @@ namespace LanBridge
                 _list.Items.Clear();
                 foreach (var row in rows)
                 {
-                    var item = new ListViewItem(row.Name) { Tag = row, UseItemStyleForSubItems = true };
+                    var item = new ListViewItem(row.Name) { Tag = row, UseItemStyleForSubItems = true, ToolTipText = row.Name };
                     item.SubItems.Add(UiFormat.State(row.State));
                     item.SubItems.Add(row.HasEndpoint ? row.IpAddress + ":" + row.Port : "—");
                     item.SubItems.Add(UiFormat.Relative(row.LastSeenUtc));
@@ -583,12 +617,29 @@ namespace LanBridge
 
         private void ShowError(string code)
         {
+            _log.Warn("Device list operation failed: " + Sanitizer.SanitizeLogValue(code));
             MessageBox.Show(
                 this,
                 Sanitizer.MapError(code),
                 "LanBridge",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);
+        }
+
+        private void ResizeColumns()
+        {
+            var width = _list.ClientSize.Width;
+            if (width <= 0 || _list.Columns.Count < 4) return;
+
+            var device = Math.Max(180, (int)(width * 0.40));
+            var status = Math.Max(90, (int)(width * 0.18));
+            var address = Math.Max(130, (int)(width * 0.25));
+            var last = Math.Max(70, width - device - status - address);
+
+            _list.Columns[0].Width = device;
+            _list.Columns[1].Width = status;
+            _list.Columns[2].Width = address;
+            _list.Columns[3].Width = last;
         }
 
         protected override void OnFormClosed(FormClosedEventArgs e)
