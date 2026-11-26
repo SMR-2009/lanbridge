@@ -2,6 +2,26 @@
 
 All notable changes to LanBridge are documented here. The format is based on Keep a Changelog, and this project uses semantic versioning.
 
+## [0.1.4] - 2026-11-26
+
+### Added
+
+- Settings has a **Run repair** action that checks the receive folder, saves settings, verifies startup registration, removes stale partial transfers, and repairs the firewall rule for the current executable.
+- **Repair details** explains exactly what the repair action changes.
+- A `.NET Framework 4.8` runtime config enables `GCConserveMemory` and the release includes `LanBridge.exe.config` next to the executable.
+
+### Changed
+
+- Bulk transfer now reads files synchronously with a direct 64 KiB buffer and writes one reusable frame buffer per file. This removes a payload allocation and a copy for every chunk, and avoids async FileStream overhead.
+- Sender and receiver use `SHA256Cng` for bulk hashing.
+- File reads use `FileOptions.SequentialScan` with no extra FileStream buffer; writes use the same 64 KiB transfer size.
+- The installer downloads, checksums, and installs the runtime config alongside the executable.
+
+### Verification
+
+- 118 tests pass, including a 64 MiB loopback transfer.
+- Local loopback transfer measured about 87 MiB/s on this laptop.
+
 ## [0.1.3] - 2026-11-26
 
 ### Added

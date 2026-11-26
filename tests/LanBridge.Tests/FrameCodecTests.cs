@@ -53,6 +53,33 @@ namespace LanBridge.Tests
         }
 
         [Fact]
+        public async Task FileDataBuffer_RoundTripsWithoutPerChunkPayloadArrays()
+        {
+            using var stream = new MemoryStream();
+            var sendBuffer = new byte[FrameCodec.FileDataHeaderSize + FrameCodec.MaxFileChunk];
+            var source = new byte[FrameCodec.MaxFileChunk];
+            for (var i = 0; i < source.Length; i++) source[i] = (byte)(i % 251);
+            Buffer.BlockCopy(source, 0, sendBuffer, FrameCodec.FileDataHeaderSize, source.Length);
+            FrameCodec.WriteFileDataHeader(sendBuffer, 7, source.Length);
+            await FrameCodec.WriteFileDataAsync(
+                stream,
+                sendBuffer,
+                FrameCodec.FileDataHeaderSize + source.Length,
+                default);
+
+            stream.Position = 0;
+            var receiveBuffer = new byte[FrameCodec.MaxFileDataPayload];
+            var frame = await FrameCodec.ReadFileDataAsync(stream, receiveBuffer, default);
+
+            Assert.Equal(FrameType.FileData, frame.Type);
+            Assert.Equal(7, frame.Index);
+            Assert.Equal(4, frame.DataOffset);
+            Assert.Equal(source.Length, frame.DataLength);
+            Assert.Equal(source[0], frame.DataBuffer[frame.DataOffset]);
+            Assert.Equal(source[source.Length - 1], frame.DataBuffer[frame.DataOffset + source.Length - 1]);
+        }
+
+        [Fact]
         public async Task OversizedFileDataFrame_IsRejected()
         {
             using var stream = new MemoryStream();

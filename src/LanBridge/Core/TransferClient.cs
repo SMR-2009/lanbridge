@@ -330,27 +330,31 @@ namespace LanBridge.Core
                         FileMode.Open,
                         FileAccess.Read,
                         FileShare.Read,
-                        65536,
-                        FileOptions.SequentialScan | FileOptions.Asynchronous))
-                    using (var sha = SHA256.Create())
+                        1,
+                        FileOptions.SequentialScan))
+                    using (var sha = new SHA256Cng())
                     {
-                        var buffer = new byte[32768];
-                        var hashScratch = new byte[32768];
+                        // One reusable frame buffer per file. The data is read
+                        // directly after the 9-byte frame header, so bulk transfer
+                        // does not allocate a new array for every 64 KiB chunk.
+                        var frameBuffer = new byte[FrameCodec.FileDataHeaderSize + FrameCodec.MaxFileChunk];
+                        var hashScratch = new byte[FrameCodec.MaxFileChunk];
                         long sent = 0;
 
                         while (true)
                         {
-                            var read = await stream.ReadAsync(buffer, 0, buffer.Length, cancellationToken).ConfigureAwait(false);
+                            var read = stream.Read(
+                                frameBuffer,
+                                FrameCodec.FileDataHeaderSize,
+                                FrameCodec.MaxFileChunk);
                             if (read <= 0) break;
 
-                            sha.TransformBlock(buffer, 0, read, hashScratch, 0);
-                            var payload = new byte[4 + read];
-                            WriteInt32(payload, 0, index);
-                            Buffer.BlockCopy(buffer, 0, payload, 4, read);
-                            await TimeoutIo.WriteFrameAsync(
+                            sha.TransformBlock(frameBuffer, FrameCodec.FileDataHeaderSize, read, hashScratch, 0);
+                            FrameCodec.WriteFileDataHeader(frameBuffer, index, read);
+                            await TimeoutIo.WriteFileDataAsync(
                                 session.Stream,
-                                FrameType.FileData,
-                                payload,
+                                frameBuffer,
+                                FrameCodec.FileDataHeaderSize + read,
                                 _options.FileIdleTimeout,
                                 cancellationToken).ConfigureAwait(false);
 
@@ -528,13 +532,6 @@ namespace LanBridge.Core
             return builder.ToString();
         }
 
-        private static void WriteInt32(byte[] buffer, int offset, int value)
-        {
-            buffer[offset] = (byte)(value >> 24);
-            buffer[offset + 1] = (byte)(value >> 16);
-            buffer[offset + 2] = (byte)(value >> 8);
-            buffer[offset + 3] = (byte)value;
-        }
 
         private PeerRecord UpsertServerPeer(PeerEndpoint peer, HelloAckDto ack)
         {

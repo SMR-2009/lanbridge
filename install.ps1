@@ -79,7 +79,7 @@ LanBridge installer
 
 Usage:
   irm https://github.com/SMR-2009/lanbridge/releases/latest/download/install.ps1 | iex
-  .\install.ps1 [-Version v0.1.0] [-InstallDir PATH] [-NoShortcut]
+  .\install.ps1 [-Version v0.1.4] [-InstallDir PATH] [-NoShortcut]
                 [-NoFirewall] [-SkipLaunch] [-SourceDir PATH] [-Help]
 
   -SourceDir  Install from local release artifacts instead of GitHub.
@@ -179,6 +179,7 @@ try {
 
     $exe = Join-Path $script:Temp "LanBridge.exe"
     $sums = Join-Path $script:Temp "SHA256SUMS.txt"
+    $config = Join-Path $script:Temp "LanBridge.exe.config"
 
     if ($SourceDir) {
         $source = (Resolve-Path -Path $SourceDir -ErrorAction Stop).Path
@@ -193,6 +194,10 @@ try {
 
         Copy-Item -LiteralPath $sourceExe -Destination $exe -Force
         Copy-Item -LiteralPath $sourceSums -Destination $sums -Force
+        $sourceConfig = Join-Path $source "LanBridge.exe.config"
+        if (Test-Path -LiteralPath $sourceConfig) {
+            Copy-Item -LiteralPath $sourceConfig -Destination $config -Force
+        }
         Write-Step "Using local artifacts from $source"
     }
     else {
@@ -201,27 +206,43 @@ try {
         Save-Download -Url "$base/LanBridge.exe" -OutFile $exe
         Write-Step "Downloading SHA256SUMS.txt"
         Save-Download -Url "$base/SHA256SUMS.txt" -OutFile $sums
+
+        try {
+            Save-Download -Url "$base/LanBridge.exe.config" -OutFile $config
+        }
+        catch {
+            Write-Warning "The optional runtime config was not downloaded; the app still runs with defaults."
+            $config = $null
+        }
     }
 
-    $expected = $null
+    $expectedHashes = @{}
     foreach ($line in (Get-Content -LiteralPath $sums -ErrorAction Stop)) {
         $parts = ($line.Trim() -split '\s+')
         if ($parts.Count -ge 2) {
             $name = $parts[1].TrimStart("*")
-            if ($name -eq "LanBridge.exe") {
-                $expected = $parts[0].ToLowerInvariant()
-                break
-            }
+            $expectedHashes[$name.ToLowerInvariant()] = $parts[0].ToLowerInvariant()
         }
     }
 
-    if (-not $expected) {
+    if (-not $expectedHashes.ContainsKey("lanbridge.exe")) {
         throw "SHA256SUMS.txt does not list LanBridge.exe."
     }
 
-    $actual = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($actual -ne $expected) {
-        throw "Checksum mismatch. The download may be corrupted or incomplete."
+    foreach ($pair in @(
+        @{ Name = "LanBridge.exe"; Path = $exe }
+        @{ Name = "LanBridge.exe.config"; Path = $config }
+    )) {
+        if (-not $pair.Path -or -not (Test-Path -LiteralPath $pair.Path)) { continue }
+        $key = $pair.Name.ToLowerInvariant()
+        if (-not $expectedHashes.ContainsKey($key)) {
+            throw "SHA256SUMS.txt does not list $($pair.Name)."
+        }
+
+        $actual = (Get-FileHash -LiteralPath $pair.Path -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -ne $expectedHashes[$key]) {
+            throw "Checksum mismatch for $($pair.Name). The download may be corrupted or incomplete."
+        }
     }
 
     if (Get-Process -Name "LanBridge" -ErrorAction SilentlyContinue) {
@@ -231,6 +252,9 @@ try {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     $target = Join-Path $InstallDir "LanBridge.exe"
     Copy-Item -LiteralPath $exe -Destination $target -Force
+    if ($config -and (Test-Path -LiteralPath $config)) {
+        Copy-Item -LiteralPath $config -Destination ($target + ".config") -Force
+    }
     Write-Step "Files copied to $InstallDir"
 
     if (-not $NoShortcut) {

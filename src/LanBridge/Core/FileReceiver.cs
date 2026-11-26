@@ -37,9 +37,9 @@ namespace LanBridge.Core
                 FileMode.CreateNew,
                 FileAccess.Write,
                 FileShare.None,
-                65536,
+                1,
                 FileOptions.SequentialScan);
-            _sha = SHA256.Create();
+            _sha = new SHA256Cng();
         }
 
         public void Write(byte[] buffer, int offset, int count)

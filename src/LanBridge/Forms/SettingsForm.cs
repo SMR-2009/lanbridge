@@ -144,25 +144,65 @@ namespace LanBridge
                 ForeColor = Color.FromArgb(100, 116, 139),
                 Font = new Font("Segoe UI", 9f),
                 AutoSize = false,
-                Size = new Size(512, 32),
-                Location = new Point(24, 340)
+                Size = new Size(512, 22),
+                Location = new Point(24, 338)
             };
             Controls.Add(autoNote);
 
-            var repair = MakeButton("Repair firewall rule", false);
+            var repairNote = new Label
+            {
+                Text = "Run repair checks the receive folder, settings, startup, stale transfers, and firewall.",
+                ForeColor = Color.FromArgb(100, 116, 139),
+                Font = new Font("Segoe UI", 9f),
+                AutoSize = false,
+                Size = new Size(512, 22),
+                Location = new Point(24, 362)
+            };
+            Controls.Add(repairNote);
+
+            var repair = MakeButton("Run repair", false);
             repair.Location = new Point(24, 390);
-            repair.Size = new Size(156, 34);
+            repair.Size = new Size(124, 34);
             repair.Click += async (s, e) =>
             {
-                _status.Text = "Waiting for Windows permission...";
-                var ok = await Firewall.AddRuleAsync(Application.ExecutablePath);
-                if (IsDisposed) return;
-                _status.Text = ok ? "Firewall rule added." : "The firewall rule was not added.";
+                repair.Enabled = false;
+                _error.Text = string.Empty;
+                _status.Text = "Checking settings, startup, and firewall...";
+
+                try
+                {
+                    var report = await RepairService.RunAsync(
+                        _config,
+                        _configPath,
+                        Application.ExecutablePath);
+
+                    if (IsDisposed) return;
+
+                    _status.Text = report.Summary;
+                    if (!report.Success)
+                    {
+                        _error.Text = string.Join(" ", report.Warnings);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (!IsDisposed) _error.Text = "Repair failed: " + ex.Message;
+                }
+                finally
+                {
+                    if (!IsDisposed) repair.Enabled = true;
+                }
             };
             Controls.Add(repair);
 
+            var repairDetails = MakeButton("Repair details", false);
+            repairDetails.Location = new Point(156, 390);
+            repairDetails.Size = new Size(132, 34);
+            repairDetails.Click += (s, e) => ShowRepairDetails();
+            Controls.Add(repairDetails);
+
             var openLogs = MakeButton("Open logs", false);
-            openLogs.Location = new Point(188, 390);
+            openLogs.Location = new Point(296, 390);
             openLogs.Size = new Size(112, 34);
             openLogs.Click += (s, e) => OpenLogs();
             Controls.Add(openLogs);
@@ -268,6 +308,23 @@ namespace LanBridge
 
             DialogResult = DialogResult.OK;
             Close();
+        }
+
+        private void ShowRepairDetails()
+        {
+            MessageBox.Show(
+                this,
+                "Run repair checks:\n\n"
+                + "- the receive folder exists and is writable\n"
+                + "- settings are saved\n"
+                + "- start at sign-in matches the setting\n"
+                + "- stale .part files older than one hour are removed\n"
+                + "- the firewall rule points at this executable\n\n"
+                + "It never touches received files or pairing pins. "
+                + "Reinstall with install.ps1 if the executable itself is damaged.",
+                "Repair details",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
         }
 
         private void OpenLogs()

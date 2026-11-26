@@ -18,6 +18,15 @@ namespace LanBridge.Core
                  + "program=\"" + exePath + "\" enable=yes profile=private,public remoteip=LocalSubnet";
         }
 
+        public static string BuildSetRuleArguments(string exePath)
+        {
+            if (string.IsNullOrWhiteSpace(exePath))
+                throw new ArgumentNullException(nameof(exePath));
+
+            return "advfirewall firewall set rule name=\"" + RuleName + "\" new "
+                 + "program=\"" + exePath + "\" enable=yes profile=private,public remoteip=LocalSubnet";
+        }
+
         public static string BuildDeleteRuleArguments()
         {
             return "advfirewall firewall delete rule name=\"" + RuleName + "\"";
@@ -45,6 +54,12 @@ namespace LanBridge.Core
         public static Task<bool> AddRuleAsync(string exePath)
         {
             var arguments = BuildAddRuleArguments(exePath);
+            return Task.Run(() => RunElevated(arguments));
+        }
+
+        public static Task<bool> SetRuleProgramAsync(string exePath)
+        {
+            var arguments = BuildSetRuleArguments(exePath);
             return Task.Run(() => RunElevated(arguments));
         }
 

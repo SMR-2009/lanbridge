@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -109,6 +110,27 @@ namespace LanBridge.Tests
             Assert.Equal("not_lan", result.ErrorCode);
             Assert.Empty(harness.Prompter.Offers);
             Assert.Empty(Directory.GetFiles(harness.Profile.ReceiveDir));
+        }
+
+        [Fact]
+        public async Task Send_64MiB_CompletesWithExpectedContent()
+        {
+            using var harness = new EndToEndHarness();
+            Assert.True((await harness.Client.PairAsync(harness.Peer, default)).Success);
+            var content = new byte[64 * 1024 * 1024];
+            new Random(1234).NextBytes(content);
+            var source = harness.SourceFile("large.bin", content);
+
+            var stopwatch = Stopwatch.StartNew();
+            var result = await harness.Client.SendAsync(harness.Peer, new[] { source }, default);
+            stopwatch.Stop();
+
+            Assert.True(result.Success, result.ErrorCode);
+            Assert.Equal(content.Length, new FileInfo(harness.ReceivePath("large.bin")).Length);
+            Console.WriteLine(
+                "64 MiB loopback transfer: " + stopwatch.ElapsedMilliseconds + " ms, "
+                + Math.Round(content.Length / 1024d / 1024d / Math.Max(0.001, stopwatch.Elapsed.TotalSeconds), 1)
+                + " MiB/s");
         }
 
         [Fact]

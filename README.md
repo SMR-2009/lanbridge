@@ -31,7 +31,7 @@ The installer:
 
 To skip the firewall step, run the installer with `-NoFirewall`. To skip start at sign-in, use `-NoStartup`.
 
-If you prefer a manual install, download `lanbridge-v0.1.3-win.zip` from the [latest release](https://github.com/SMR-2009/lanbridge/releases/latest), extract it, and run:
+If you prefer a manual install, download `lanbridge-v0.1.4-win.zip` from the [latest release](https://github.com/SMR-2009/lanbridge/releases/latest), extract it, and run:
 
 ```powershell
 .\install.ps1 -SourceDir .
@@ -59,7 +59,9 @@ The app repairs what it safely can on its own:
 - a damaged identity is replaced, which intentionally requires re-pairing;
 - stale `.part` files older than one hour are removed at startup.
 
-For firewall problems, open **Settings** and use **Repair firewall rule**. If the app will not start at all, run the install command again; if that cannot repair it, uninstall and install again.
+For a full check, open **Settings** and use **Run repair**. It checks the receive folder, settings, start at sign-in, stale partial transfers, and the firewall rule, and asks for UAC only if the firewall rule needs changing.
+
+If the app will not start at all, run the install command again; if that cannot repair it, uninstall and install again.
 
 ### Uninstall
 
@@ -133,7 +135,7 @@ See [docs/security.md](docs/security.md) for the threat model and limitations. R
 | `Running scripts is disabled` | The one-liner runs in memory and is not affected. If you downloaded the script, run `powershell -ExecutionPolicy Bypass -File .\install.ps1`. |
 | The other PC does not appear | Make sure both are on the same network, LanBridge is running on both, and **Visible on this network** is checked. Guest Wi-Fi often blocks this. |
 | Pairing says **Identity changed** | That is the certificate pin working. Unpair the old entry and pair again. |
-| Files are refused as unreachable | Open **Settings**, choose **Repair firewall rule**, and approve the UAC prompt. |
+| Files are refused as unreachable | Open **Settings**, choose **Run repair**, and approve the UAC prompt if asked. |
 | UAC appears on every launch | You are probably starting a different `LanBridge.exe`. Use the installed copy in `%LOCALAPPDATA%\Programs\LanBridge`. |
 | SmartScreen warns on first launch | The binary is not code-signed. Check the release SHA-256, or build it yourself. |
 

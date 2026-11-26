@@ -142,7 +142,7 @@ Left-clicking the tray icon opens the device list.
 - Start with Windows
 - Visible on this network
 - Auto-accept from paired devices (default off)
-- Repair firewall rule (UAC)
+- Run repair (folder, settings, startup, partial transfers, firewall)
 - Open logs
 - About / version
 

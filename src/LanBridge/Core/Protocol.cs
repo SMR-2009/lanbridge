@@ -41,6 +41,32 @@ namespace LanBridge.Core
         }
     }
 
+    public sealed class FileDataFrame
+    {
+        public FrameType Type { get; }
+        public int Index { get; }
+        public byte[] DataBuffer { get; }
+        public int DataOffset { get; }
+        public int DataLength { get; }
+        public byte[] Payload { get; }
+
+        public FileDataFrame(
+            FrameType type,
+            int index,
+            byte[] dataBuffer,
+            int dataOffset,
+            int dataLength,
+            byte[] payload)
+        {
+            Type = type;
+            Index = index;
+            DataBuffer = dataBuffer;
+            DataOffset = dataOffset;
+            DataLength = dataLength;
+            Payload = payload;
+        }
+    }
+
     public sealed class ProtocolException : Exception
     {
         public string Code { get; }
