@@ -126,6 +126,8 @@ namespace LanBridge.Tests
             var result = await task;
             Assert.False(result.Success);
             await WaitUntilAsync(() => !harness.Server.IsReceiving, 3000);
+            await WaitUntilAsync(() => harness.Prompter.ReceiveProgressEvents.Any(progress => progress.Failed), 3000);
+            Assert.Contains(harness.Prompter.ReceiveProgressEvents, progress => progress.Failed);
             Assert.Empty(Directory.GetFiles(harness.Profile.ReceiveDir, "*.part"));
         }
 
