@@ -216,6 +216,13 @@ namespace LanBridge
             };
             _list.ContextMenuStrip = _menu;
 
+            AllowDrop = true;
+            DragEnter += OnDragEnter;
+            DragDrop += OnDragDrop;
+            _list.AllowDrop = true;
+            _list.DragEnter += OnDragEnter;
+            _list.DragDrop += OnDragDrop;
+
             _timer = new Timer { Interval = 1000 };
             _timer.Tick += (s, e) => RefreshRows();
             _timer.Start();
@@ -384,6 +391,18 @@ namespace LanBridge
             }
 
             UpdatePrimary();
+        }
+
+        private void OnDragEnter(object sender, DragEventArgs e)
+        {
+            if (e.Data.GetDataPresent(DataFormats.FileDrop))
+                e.Effect = DragDropEffects.Copy;
+        }
+
+        private void OnDragDrop(object sender, DragEventArgs e)
+        {
+            var files = e.Data.GetData(DataFormats.FileDrop) as string[];
+            if (files != null && files.Length > 0) SetSendFiles(files);
         }
 
         private void UpdatePrimary()
