@@ -66,6 +66,34 @@ namespace LanBridge.Tests
         }
 
         [Fact]
+        public void Complete_ZeroByteFile_Works()
+        {
+            using var profile = new TempProfile();
+            using (var receiver = new FileReceiver(profile.ReceiveDir, "empty.txt", 0))
+            {
+                receiver.Complete(Sha256(Array.Empty<byte>()));
+                Assert.True(File.Exists(receiver.FinalPath));
+                Assert.Equal(0, new FileInfo(receiver.FinalPath).Length);
+            }
+
+            Assert.Empty(Directory.GetFiles(profile.ReceiveDir, "*.part"));
+        }
+
+        [Fact]
+        public void UnicodeName_IsPreserved()
+        {
+            using var profile = new TempProfile();
+            var bytes = Encoding.UTF8.GetBytes("unicode");
+            const string unicodeName = "resume-2026-\u00fc.txt";
+            using (var receiver = new FileReceiver(profile.ReceiveDir, unicodeName, bytes.Length))
+            {
+                receiver.Write(bytes, 0, bytes.Length);
+                receiver.Complete(Sha256(bytes));
+                Assert.Equal(unicodeName, Path.GetFileName(receiver.FinalPath));
+            }
+        }
+
+        [Fact]
         public void TraversalName_StaysInsideReceiveFolder()
         {
             using var profile = new TempProfile();

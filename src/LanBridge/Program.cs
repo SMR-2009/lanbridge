@@ -32,6 +32,22 @@ namespace LanBridge
             var logPath = Path.Combine(appData, "lanbridge.log");
             var log = new FileLogger(logPath);
 
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+            Application.ThreadException += (sender, args) =>
+            {
+                log.Error("Unhandled UI exception", args.Exception);
+                MessageBox.Show(
+                    "LanBridge hit an unexpected error. The details were written to the log.\n\n"
+                    + logPath,
+                    "LanBridge",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            };
+            AppDomain.CurrentDomain.UnhandledException += (sender, args) =>
+            {
+                log.Error("Unhandled exception", args.ExceptionObject as Exception);
+            };
+
             if (!SingleInstance.TryAcquire(out var mutex))
             {
                 if (!Environment.GetCommandLineArgs().Any(

@@ -26,3 +26,18 @@ jobs:
 
       - name: Test
         run: dotnet test LanBridge.sln -c Release --no-build
+
+      - name: Validate PowerShell scripts
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($file in @("install.ps1", "uninstall.ps1", "build.ps1")) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file).Path, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$file`: $($_.Message)" }
+              $failed = $true
+            }
+          }
+          if ($failed) { throw "PowerShell validation failed." }
