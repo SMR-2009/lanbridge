@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{2CF5D9C3-497A-490C-B351-668B6D16AFC1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LanBridge", "src\LanBridge\LanBridge.csproj", "{665ACE17-2F3B-4BE7-BD19-C794C4231207}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{EA615505-AB89-4BAF-B7E8-0D8471DD57B1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LanBridge.Tests", "tests\LanBridge.Tests\LanBridge.Tests.csproj", "{9E41A805-2824-420F-8E87-640E39CB636C}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{665ACE17-2F3B-4BE7-BD19-C794C4231207}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{665ACE17-2F3B-4BE7-BD19-C794C4231207}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{665ACE17-2F3B-4BE7-BD19-C794C4231207}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{665ACE17-2F3B-4BE7-BD19-C794C4231207}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9E41A805-2824-420F-8E87-640E39CB636C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9E41A805-2824-420F-8E87-640E39CB636C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9E41A805-2824-420F-8E87-640E39CB636C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9E41A805-2824-420F-8E87-640E39CB636C}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{665ACE17-2F3B-4BE7-BD19-C794C4231207} = {2CF5D9C3-497A-490C-B351-668B6D16AFC1}
+		{9E41A805-2824-420F-8E87-640E39CB636C} = {EA615505-AB89-4BAF-B7E8-0D8471DD57B1}
+	EndGlobalSection
+EndGlobal

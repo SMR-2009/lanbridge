@@ -1,0 +1,10 @@
+bin/
+obj/
+.vs/
+artifacts/
+.superpowers/
+*.user
+*.suo
+*.pfx
+*.dpapi
+*.log
