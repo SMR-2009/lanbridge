@@ -3,6 +3,7 @@ param(
     [string]$InstallDir = "$env:LOCALAPPDATA\Programs\LanBridge",
     [string]$SourceDir,
     [switch]$NoShortcut,
+    [switch]$NoFirewall,
     [switch]$SkipLaunch
 )
 
@@ -59,6 +60,37 @@ try {
         $shortcut.Save()
         [Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
         Write-Host "Start Menu shortcut created." -ForegroundColor DarkGray
+    }
+
+    if (-not $NoFirewall) {
+        $existingRule = & netsh.exe advfirewall firewall show rule name=LanBridge 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Windows Firewall rule already present." -ForegroundColor DarkGray
+        }
+        else {
+            Write-Host "Adding the Windows Firewall rule (one UAC prompt)..." -ForegroundColor DarkGray
+            try {
+                $firewallArgs = @(
+                    "advfirewall", "firewall", "add", "rule",
+                    "name=LanBridge", "dir=in", "action=allow",
+                    "program=`"$target`"", "enable=yes",
+                    "profile=private,public", "remoteip=LocalSubnet"
+                )
+                $firewall = Start-Process -FilePath "netsh.exe" -ArgumentList $firewallArgs -Verb RunAs -Wait -PassThru -WindowStyle Hidden
+                if ($firewall.ExitCode -eq 0) {
+                    Write-Host "Firewall rule added." -ForegroundColor Green
+                }
+                else {
+                    Write-Warning "The firewall rule was not added. Use Settings -> Repair firewall rule later."
+                }
+            }
+            catch {
+                Write-Warning "The firewall rule was not added. Use Settings -> Repair firewall rule later."
+            }
+        }
+    }
+    else {
+        Write-Host "Skipped the firewall rule; first-run setup will offer it once." -ForegroundColor DarkGray
     }
 
     Write-Host "LanBridge installed to $InstallDir" -ForegroundColor Green

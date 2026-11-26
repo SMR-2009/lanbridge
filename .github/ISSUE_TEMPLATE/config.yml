@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/SMR-2009/lanbridge/security/advisories/new
+    about: Report a vulnerability privately. Do not open a public issue for security problems.
+  - name: Documentation
+    url: https://github.com/SMR-2009/lanbridge/tree/main/docs
+    about: Design, protocol, security model, and the manual two-laptop checklist.

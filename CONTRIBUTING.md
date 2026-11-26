@@ -37,7 +37,7 @@ Do not open a public issue for a vulnerability. Use GitHub's private vulnerabili
 
 - Explain what changes and why.
 - List the commands you ran and the results.
-- Run the manual checklist in `docs/design.md` if you touched pairing, discovery, or transfers.
+- Run the manual checklist in `docs/manual-test.md` if you touched pairing, discovery, or transfers.
 - Note anything you could not test, especially if it needs two laptops.
 
 By contributing you agree that your changes are licensed under the MIT License and that you will follow the Code of Conduct.
