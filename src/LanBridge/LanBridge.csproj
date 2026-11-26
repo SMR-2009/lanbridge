@@ -8,7 +8,7 @@
     <Prefer32Bit>false</Prefer32Bit>
     <AssemblyName>LanBridge</AssemblyName>
     <RootNamespace>LanBridge</RootNamespace>
-    <Version>0.1.3</Version>
+    <Version>0.1.4</Version>
     <ApplicationIcon>..\..\assets\icon.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>

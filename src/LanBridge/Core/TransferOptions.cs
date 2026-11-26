@@ -64,6 +64,31 @@ namespace LanBridge.Core
             return WithTimeout(FrameCodec.ReadAsync(stream, cancellationToken), timeout, cancellationToken);
         }
 
+        public static Task<FileDataFrame> ReadFileDataAsync(
+            Stream stream,
+            byte[] dataBuffer,
+            TimeSpan timeout,
+            CancellationToken cancellationToken)
+        {
+            return WithTimeout(
+                FrameCodec.ReadFileDataAsync(stream, dataBuffer, cancellationToken),
+                timeout,
+                cancellationToken);
+        }
+
+        public static Task WriteFileDataAsync(
+            Stream stream,
+            byte[] buffer,
+            int count,
+            TimeSpan timeout,
+            CancellationToken cancellationToken)
+        {
+            return WithTimeout(
+                FrameCodec.WriteFileDataAsync(stream, buffer, count, cancellationToken),
+                timeout,
+                cancellationToken);
+        }
+
         public static Task WriteFrameAsync(
             Stream stream,
             FrameType type,

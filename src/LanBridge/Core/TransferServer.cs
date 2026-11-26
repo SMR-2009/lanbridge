@@ -532,6 +532,8 @@ namespace LanBridge.Core
                 await WriteJsonAsync(ssl, FrameType.Accept, new AcceptDto { TransferId = offer.TransferId }, cancellationToken).ConfigureAwait(false);
                 progress = _prompter.CreateReceiveProgress(offer, cancellationToken);
 
+                var fileBuffer = new byte[FrameCodec.MaxFileDataPayload];
+
                 for (var index = 0; index < files.Count; index++)
                 {
                     var beginFrame = await TimeoutIo.ReadFrameAsync(ssl, _options.FileIdleTimeout, cancellationToken).ConfigureAwait(false);
@@ -587,7 +589,12 @@ namespace LanBridge.Core
                         long received = 0;
                         while (true)
                         {
-                            var dataFrame = await TimeoutIo.ReadFrameAsync(ssl, _options.FileIdleTimeout, cancellationToken).ConfigureAwait(false);
+                            var dataFrame = await TimeoutIo.ReadFileDataAsync(
+                                ssl,
+                                fileBuffer,
+                                _options.FileIdleTimeout,
+                                cancellationToken).ConfigureAwait(false);
+
                             if (dataFrame.Type == FrameType.Cancel)
                             {
                                 receiver.Abort();
@@ -613,14 +620,11 @@ namespace LanBridge.Core
 
                             if (dataFrame.Type != FrameType.FileData)
                                 throw new InvalidDataException("Expected FILE_DATA.");
-                            if (dataFrame.Payload.Length < 4)
-                                throw new InvalidDataException("Short FILE_DATA frame.");
-                            if (ReadInt32(dataFrame.Payload, 0) != index)
+                            if (dataFrame.Index != index)
                                 throw new InvalidDataException("Unexpected file index.");
 
-                            var count = dataFrame.Payload.Length - 4;
-                            receiver.Write(dataFrame.Payload, 4, count);
-                            received += count;
+                            receiver.Write(dataFrame.DataBuffer, dataFrame.DataOffset, dataFrame.DataLength);
+                            received += dataFrame.DataLength;
                             progress.Report(new TransferProgress
                             {
                                 FileName = files[index].Name,
@@ -735,13 +739,6 @@ namespace LanBridge.Core
             }
         }
 
-        private static int ReadInt32(byte[] buffer, int offset)
-        {
-            return (buffer[offset] << 24) |
-                   (buffer[offset + 1] << 16) |
-                   (buffer[offset + 2] << 8) |
-                   buffer[offset + 3];
-        }
 
         private bool IsRemoteAllowed(IPAddress remote)
         {

@@ -19,6 +19,17 @@ namespace LanBridge.Tests
         }
 
         [Fact]
+        public void SetArguments_UpdateTheExistingRuleProgram()
+        {
+            var args = Firewall.BuildSetRuleArguments(@"C:\Apps\LanBridge.exe");
+
+            Assert.Contains("name=\"LanBridge\"", args);
+            Assert.Contains("set rule", args);
+            Assert.Contains("program=\"C:\\Apps\\LanBridge.exe\"", args);
+            Assert.Contains("remoteip=LocalSubnet", args);
+        }
+
+        [Fact]
         public void DeleteArguments_TargetTheRule()
         {
             var args = Firewall.BuildDeleteRuleArguments();

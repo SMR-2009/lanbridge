@@ -30,6 +30,7 @@ jobs:
           generate_release_notes: true
           files: |
             artifacts/LanBridge.exe
+            artifacts/LanBridge.exe.config
             artifacts/lanbridge-*-win.zip
             artifacts/install.ps1
             artifacts/uninstall.ps1
