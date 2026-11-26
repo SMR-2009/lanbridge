@@ -20,6 +20,7 @@ namespace LanBridge
         private readonly PeerStore _peers;
         private readonly ILogger _log;
         private readonly WinFormsUi _ui;
+        private readonly Control _uiHost;
         private readonly TransferServer _server;
         private readonly TransferClient _client;
         private readonly DiscoveryService _discovery;
@@ -50,7 +51,9 @@ namespace LanBridge
 
             Directory.CreateDirectory(_config.ReceiveFolder);
 
-            _ui = new WinFormsUi(_log, CancelInbound, CancelOutbound);
+            _uiHost = new Control();
+            _uiHost.CreateControl();
+            _ui = new WinFormsUi(_log, CancelInbound, CancelOutbound, _uiHost);
             var options = new TransferOptions();
 
             _server = new TransferServer(
@@ -129,6 +132,7 @@ namespace LanBridge
                 _discovery.Dispose();
                 _server.Dispose();
                 _ui.CloseAll();
+                _uiHost.Dispose();
                 throw;
             }
         }
@@ -407,6 +411,7 @@ namespace LanBridge
             _tray.Dispose();
             _trayIcon.Dispose();
             _menu.Dispose();
+            _uiHost.Dispose();
             ExitThread();
         }
 
@@ -422,6 +427,7 @@ namespace LanBridge
                 _discovery?.Dispose();
                 _server?.Dispose();
                 _ui?.CloseAll();
+                _uiHost?.Dispose();
             }
 
             base.Dispose(disposing);

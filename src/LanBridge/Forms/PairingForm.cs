@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Threading;
 using System.Windows.Forms;
 using LanBridge.Core;
 
@@ -8,6 +9,7 @@ namespace LanBridge
     internal sealed class PairingForm : Form
     {
         private readonly PeerEndpoint _peer;
+        private readonly ILogger _log;
         private readonly Label _subtitle;
         private readonly Label _device;
         private readonly Panel _approvalPanel;
@@ -18,16 +20,18 @@ namespace LanBridge
         private readonly Button _approve;
         private readonly Button _deny;
         private readonly Button _copy;
-        private readonly Timer _timer;
+        private readonly System.Windows.Forms.Timer _timer;
         private string _code;
         private DateTimeOffset _expiresAt;
 
         public event Action Approved;
         public event Action Denied;
 
-        public PairingForm(PeerEndpoint peer)
+        public PairingForm(PeerEndpoint peer, ILogger log = null)
         {
             _peer = peer ?? throw new ArgumentNullException(nameof(peer));
+            _log = log ?? NullLogger.Instance;
+            _log.Info("PairingForm constructed on thread " + Thread.CurrentThread.ManagedThreadId);
 
             Text = "Pair with " + _peer.Name;
             ClientSize = new Size(500, 336);
@@ -103,6 +107,7 @@ namespace LanBridge
             _deny.Location = new Point(248, 84);
             _deny.Click += (s, e) =>
             {
+                _log.Info("PairingForm denied by user.");
                 Denied?.Invoke();
                 Close();
             };
@@ -112,6 +117,7 @@ namespace LanBridge
             _approve.Location = new Point(356, 84);
             _approve.Click += (s, e) =>
             {
+                _log.Info("PairingForm approved by user.");
                 _approve.Enabled = false;
                 _deny.Enabled = false;
                 _subtitle.Text = "Approved. Preparing the pairing code…";
@@ -165,8 +171,11 @@ namespace LanBridge
             };
             _codePanel.Controls.Add(_expiry);
 
-            _timer = new Timer { Interval = 250 };
+            _timer = new System.Windows.Forms.Timer { Interval = 250 };
             _timer.Tick += (s, e) => UpdateExpiry();
+            Shown += (s, e) => _log.Info(
+                "PairingForm shown on thread " + Thread.CurrentThread.ManagedThreadId
+                + "; invokeRequired=" + InvokeRequired);
         }
 
         public void ShowCode(PairingCodeDisplay display)
@@ -178,6 +187,8 @@ namespace LanBridge
                 return;
             }
 
+            _log.Info("PairingForm.ShowCode on thread " + Thread.CurrentThread.ManagedThreadId
+                + "; invokeRequired=" + InvokeRequired);
             _code = display.Code;
             _expiresAt = display.ExpiresAtUtc;
             _approvalPanel.Visible = false;
@@ -189,6 +200,7 @@ namespace LanBridge
             _timer.Start();
             UpdateExpiry();
             Activate();
+            _log.Info("PairingForm code displayed.");
         }
 
         private void CopyCode()
@@ -222,6 +234,7 @@ namespace LanBridge
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
+            _log.Info("PairingForm closed.");
             _timer.Stop();
             _timer.Dispose();
             base.OnFormClosed(e);

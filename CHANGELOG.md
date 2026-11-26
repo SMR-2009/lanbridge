@@ -2,6 +2,16 @@
 
 All notable changes to LanBridge are documented here. The format is based on Keep a Changelog, and this project uses semantic versioning.
 
+## [0.1.5] - 2026-11-26
+
+### Fixed
+
+- Pairing UI requests now use a dedicated WinForms control owned by the UI thread instead of relying only on the captured `SynchronizationContext`. This prevents a pairing or code window from being created on a dispatcher thread with no message loop.
+
+### Added
+
+- Pairing-phase diagnostics in the log: request, UI callback, form shown, approval/denial, code display, and close. Pairing codes are never written to the log.
+
 ## [0.1.4] - 2026-11-26
 
 ### Added
