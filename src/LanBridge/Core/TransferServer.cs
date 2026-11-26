@@ -29,6 +29,7 @@ namespace LanBridge.Core
         private readonly ConcurrentDictionary<TcpClient, byte> _clients = new ConcurrentDictionary<TcpClient, byte>();
 
         private readonly SemaphoreSlim _pairingLock = new SemaphoreSlim(1, 1);
+        private TcpClient _activeClient;
         private TcpListener _listener;
         private CancellationTokenSource _cancellation;
         private Task _acceptLoop;
@@ -213,7 +214,15 @@ namespace LanBridge.Core
 
                     if (hello.Intent == "send")
                     {
-                        await HandleSendAsync(ssl, hello, ack, clientFingerprint, remote, cancellationToken).ConfigureAwait(false);
+                        Volatile.Write(ref _activeClient, client);
+                        try
+                        {
+                            await HandleSendAsync(ssl, hello, ack, clientFingerprint, remote, cancellationToken).ConfigureAwait(false);
+                        }
+                        finally
+                        {
+                            Interlocked.CompareExchange(ref _activeClient, null, client);
+                        }
                         return;
                     }
 
@@ -232,6 +241,12 @@ namespace LanBridge.Core
                 _clients.TryRemove(client, out _);
                 try { client.Close(); } catch { }
             }
+        }
+
+        public void CancelActiveTransfer()
+        {
+            var client = Volatile.Read(ref _activeClient);
+            try { client?.Close(); } catch { }
         }
 
         private async Task HandlePairAsync(
@@ -625,6 +640,10 @@ namespace LanBridge.Core
                         await SendFileErrorAsync(ssl, index, "write_failed", cancellationToken).ConfigureAwait(false);
                         await SendErrorAsync(ssl, "transfer_failed", cancellationToken, index, completed).ConfigureAwait(false);
                         return;
+                    }
+                    finally
+                    {
+                        receiver.Abort();
                     }
                 }
 
