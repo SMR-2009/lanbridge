@@ -18,6 +18,14 @@ namespace LanBridge.Tests
             return port;
         }
 
+        public static int FreeUdpPort()
+        {
+            var udp = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+            var port = ((IPEndPoint)udp.Client.LocalEndPoint).Port;
+            udp.Close();
+            return port;
+        }
+
         public static DeviceIdentity Identity(TempProfile profile, string name)
         {
             return DeviceIdentity.LoadOrCreate(Path.Combine(profile.Root, name), name, NullLogger.Instance);
