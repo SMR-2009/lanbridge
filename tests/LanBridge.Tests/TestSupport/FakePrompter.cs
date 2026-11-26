@@ -16,6 +16,7 @@ namespace LanBridge.Tests
         public bool ApproveOffers { get; set; } = true;
         public bool BlockPairingApproval { get; set; }
         public bool BlockPairingCode { get; set; }
+        public TaskCompletionSource<bool> OfferGate { get; set; }
         public string PairingCode { get; set; }
         public string LastCode { get; private set; }
         public int CloseCount => Volatile.Read(ref _closeCount);
@@ -53,10 +54,11 @@ namespace LanBridge.Tests
             Interlocked.Increment(ref _closeCount);
         }
 
-        public Task<bool> ApproveOfferAsync(TransferOffer offer, CancellationToken cancellationToken)
+        public async Task<bool> ApproveOfferAsync(TransferOffer offer, CancellationToken cancellationToken)
         {
             lock (_offers) _offers.Add(offer);
-            return Task.FromResult(ApproveOffers);
+            if (OfferGate != null) return await OfferGate.Task.ConfigureAwait(false);
+            return ApproveOffers;
         }
 
         public IProgress<TransferProgress> CreateReceiveProgress(TransferOffer offer, CancellationToken cancellationToken)

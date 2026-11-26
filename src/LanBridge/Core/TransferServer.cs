@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Security;
@@ -24,6 +25,7 @@ namespace LanBridge.Core
         private readonly TransferOptions _options;
         private readonly bool _allowLoopback;
         private readonly Func<LanScope> _scopeFactory;
+        private readonly Func<string, string, long, FileReceiver> _receiverFactory;
         private readonly ConcurrentDictionary<TcpClient, byte> _clients = new ConcurrentDictionary<TcpClient, byte>();
 
         private readonly SemaphoreSlim _pairingLock = new SemaphoreSlim(1, 1);
@@ -47,7 +49,8 @@ namespace LanBridge.Core
             ILogger log,
             TransferOptions options = null,
             bool allowLoopback = false,
-            Func<LanScope> scopeFactory = null)
+            Func<LanScope> scopeFactory = null,
+            Func<string, string, long, FileReceiver> receiverFactory = null)
         {
             if (port <= 0 || port > 65535) throw new ArgumentOutOfRangeException(nameof(port));
             _port = port;
@@ -60,6 +63,7 @@ namespace LanBridge.Core
             _options = options ?? new TransferOptions();
             _allowLoopback = allowLoopback;
             _scopeFactory = scopeFactory ?? LanScope.Capture;
+            _receiverFactory = receiverFactory ?? ((folder, name, size) => new FileReceiver(folder, name, size));
         }
 
         public void Start()
@@ -204,6 +208,12 @@ namespace LanBridge.Core
                     if (hello.Intent == "pair")
                     {
                         await HandlePairAsync(ssl, hello, clientFingerprint, remote, serverNonce, cancellationToken).ConfigureAwait(false);
+                        return;
+                    }
+
+                    if (hello.Intent == "send")
+                    {
+                        await HandleSendAsync(ssl, hello, ack, clientFingerprint, remote, cancellationToken).ConfigureAwait(false);
                         return;
                     }
 
@@ -398,15 +408,319 @@ namespace LanBridge.Core
                 cancellationToken).ConfigureAwait(false);
         }
 
+        private async Task HandleSendAsync(
+            SslStream ssl,
+            HelloDto hello,
+            HelloAckDto ack,
+            string clientFingerprint,
+            IPAddress remote,
+            CancellationToken cancellationToken)
+        {
+            if (!hello.Paired || !ack.Paired)
+            {
+                await SendErrorAsync(ssl, "not_paired", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            if (ack.Busy || Interlocked.CompareExchange(ref _receiving, 1, 0) != 0)
+            {
+                await SendErrorAsync(ssl, "busy_inbound", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            var completed = 0;
+            try
+            {
+                Frame offerFrame;
+                try
+                {
+                    offerFrame = await TimeoutIo.ReadFrameAsync(ssl, _options.OfferTimeout, cancellationToken).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    await SendErrorAsync(ssl, "timeout", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                if (offerFrame.Type == FrameType.Cancel) return;
+                if (offerFrame.Type != FrameType.Offer)
+                {
+                    await SendErrorAsync(ssl, "offer_required", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                OfferDto offerDto;
+                try
+                {
+                    offerDto = ProtocolJson.Deserialize<OfferDto>(offerFrame.Payload);
+                }
+                catch (ProtocolException)
+                {
+                    await SendErrorAsync(ssl, "invalid_offer", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                var validation = ValidateOffer(offerDto, out var files, out var total);
+                if (validation != null)
+                {
+                    await SendErrorAsync(ssl, validation, cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                var folder = _receiveFolder();
+                Directory.CreateDirectory(folder);
+                if (!HasFreeSpace(folder, total))
+                {
+                    await WriteJsonAsync(ssl, FrameType.Reject, new RejectDto { Reason = "disk_full" }, cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                var peer = new PeerEndpoint(
+                    remote,
+                    hello.Port > 0 ? hello.Port : _port,
+                    clientFingerprint,
+                    hello.Id,
+                    hello.Name);
+                var offer = new TransferOffer(peer, offerDto.TransferId, files);
+
+                bool accepted;
+                using (var offerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+                {
+                    offerCts.CancelAfter(_options.OfferTimeout);
+                    try
+                    {
+                        accepted = await _prompter.ApproveOfferAsync(offer, offerCts.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        await WriteJsonAsync(ssl, FrameType.Reject, new RejectDto { Reason = "timeout" }, cancellationToken).ConfigureAwait(false);
+                        return;
+                    }
+                }
+
+                if (!accepted)
+                {
+                    await WriteJsonAsync(ssl, FrameType.Reject, new RejectDto { Reason = "declined" }, cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                await WriteJsonAsync(ssl, FrameType.Accept, new AcceptDto { TransferId = offer.TransferId }, cancellationToken).ConfigureAwait(false);
+                var progress = _prompter.CreateReceiveProgress(offer, cancellationToken);
+
+                for (var index = 0; index < files.Count; index++)
+                {
+                    var beginFrame = await TimeoutIo.ReadFrameAsync(ssl, _options.FileIdleTimeout, cancellationToken).ConfigureAwait(false);
+                    if (beginFrame.Type == FrameType.Cancel) return;
+                    if (beginFrame.Type != FrameType.FileBegin)
+                    {
+                        await SendErrorAsync(ssl, "file_begin_required", cancellationToken).ConfigureAwait(false);
+                        return;
+                    }
+
+                    FileBeginDto begin;
+                    try
+                    {
+                        begin = ProtocolJson.Deserialize<FileBeginDto>(beginFrame.Payload);
+                    }
+                    catch (ProtocolException)
+                    {
+                        await SendErrorAsync(ssl, "invalid_file", cancellationToken).ConfigureAwait(false);
+                        return;
+                    }
+
+                    if (begin.Index != index || begin.Size != files[index].Size)
+                    {
+                        await SendErrorAsync(ssl, "invalid_file", cancellationToken).ConfigureAwait(false);
+                        return;
+                    }
+
+                    FileReceiver receiver;
+                    try
+                    {
+                        receiver = _receiverFactory(folder, begin.Name, begin.Size);
+                        if (receiver == null) throw new IOException("No receiver was created.");
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.Warn("Receiver creation failed: " + Sanitizer.SanitizeLogValue(ex.Message));
+                        await SendFileErrorAsync(ssl, index, "write_failed", cancellationToken).ConfigureAwait(false);
+                        await SendErrorAsync(ssl, "transfer_failed", cancellationToken, index, completed).ConfigureAwait(false);
+                        return;
+                    }
+
+                    try
+                    {
+                        progress.Report(new TransferProgress
+                        {
+                            FileName = files[index].Name,
+                            FileIndex = index,
+                            FileCount = files.Count,
+                            BytesTransferred = 0,
+                            TotalBytes = files[index].Size
+                        });
+
+                        long received = 0;
+                        while (true)
+                        {
+                            var dataFrame = await TimeoutIo.ReadFrameAsync(ssl, _options.FileIdleTimeout, cancellationToken).ConfigureAwait(false);
+                            if (dataFrame.Type == FrameType.Cancel)
+                            {
+                                receiver.Abort();
+                                return;
+                            }
+
+                            if (dataFrame.Type == FrameType.FileEnd)
+                            {
+                                FileEndDto end;
+                                try
+                                {
+                                    end = ProtocolJson.Deserialize<FileEndDto>(dataFrame.Payload);
+                                }
+                                catch (ProtocolException)
+                                {
+                                    throw new InvalidDataException("Invalid FILE_END.");
+                                }
+
+                                if (end.Index != index) throw new InvalidDataException("Unexpected file index.");
+                                receiver.Complete(end.Sha256);
+                                break;
+                            }
+
+                            if (dataFrame.Type != FrameType.FileData)
+                                throw new InvalidDataException("Expected FILE_DATA.");
+                            if (dataFrame.Payload.Length < 4)
+                                throw new InvalidDataException("Short FILE_DATA frame.");
+                            if (ReadInt32(dataFrame.Payload, 0) != index)
+                                throw new InvalidDataException("Unexpected file index.");
+
+                            var count = dataFrame.Payload.Length - 4;
+                            receiver.Write(dataFrame.Payload, 4, count);
+                            received += count;
+                            progress.Report(new TransferProgress
+                            {
+                                FileName = files[index].Name,
+                                FileIndex = index,
+                                FileCount = files.Count,
+                                BytesTransferred = received,
+                                TotalBytes = files[index].Size
+                            });
+                        }
+
+                        await WriteJsonAsync(ssl, FrameType.FileOk, new FileOkDto { Index = index }, cancellationToken).ConfigureAwait(false);
+                        completed++;
+                        progress.Report(new TransferProgress
+                        {
+                            FileName = files[index].Name,
+                            FileIndex = index,
+                            FileCount = files.Count,
+                            BytesTransferred = files[index].Size,
+                            TotalBytes = files[index].Size,
+                            IsComplete = true
+                        });
+                    }
+                    catch (Exception ex) when (!(ex is OperationCanceledException))
+                    {
+                        receiver.Abort();
+                        _log.Warn("File receive failed: " + Sanitizer.SanitizeLogValue(ex.Message));
+                        await SendFileErrorAsync(ssl, index, "write_failed", cancellationToken).ConfigureAwait(false);
+                        await SendErrorAsync(ssl, "transfer_failed", cancellationToken, index, completed).ConfigureAwait(false);
+                        return;
+                    }
+                }
+
+                var doneFrame = await TimeoutIo.ReadFrameAsync(ssl, _options.ControlTimeout, cancellationToken).ConfigureAwait(false);
+                if (doneFrame.Type != FrameType.Done)
+                {
+                    await SendErrorAsync(ssl, "done_required", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                await WriteJsonAsync(ssl, FrameType.DoneAck, new DoneAckDto { TransferId = offer.TransferId }, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+            }
+            catch (Exception ex)
+            {
+                _log.Warn("Send failed: " + ex.GetType().Name + ": " + Sanitizer.SanitizeLogValue(ex.Message));
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _receiving, 0);
+            }
+        }
+
+        private async Task SendFileErrorAsync(SslStream ssl, int index, string code, CancellationToken cancellationToken)
+        {
+            await WriteJsonAsync(
+                ssl,
+                FrameType.FileError,
+                new FileErrorDto { Index = index, Code = code, Message = Sanitizer.MapError(code) },
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        private static string ValidateOffer(OfferDto offer, out List<TransferFile> files, out long total)
+        {
+            files = new List<TransferFile>();
+            total = 0;
+
+            if (offer?.Files == null || offer.Files.Count == 0 || offer.Files.Count > 5000)
+                return "invalid_offer";
+
+            foreach (var file in offer.Files)
+            {
+                if (file == null || file.Size < 0) return "invalid_offer";
+                if (total > long.MaxValue - file.Size) return "invalid_offer";
+                total += file.Size;
+                files.Add(new TransferFile(PathGuard.SanitizeFileName(file.Name), file.Size));
+            }
+
+            return offer.TotalSize == total ? null : "invalid_offer";
+        }
+
+        private static bool HasFreeSpace(string folder, long total)
+        {
+            try
+            {
+                var root = Path.GetPathRoot(Path.GetFullPath(folder));
+                if (string.IsNullOrEmpty(root)) return true;
+                var drive = new DriveInfo(root);
+                return drive.AvailableFreeSpace >= total + 50L * 1024 * 1024;
+            }
+            catch
+            {
+                return true;
+            }
+        }
+
+        private static int ReadInt32(byte[] buffer, int offset)
+        {
+            return (buffer[offset] << 24) |
+                   (buffer[offset + 1] << 16) |
+                   (buffer[offset + 2] << 8) |
+                   buffer[offset + 3];
+        }
+
         private bool IsRemoteAllowed(IPAddress remote)
         {
             if (IPAddress.IsLoopback(remote)) return _allowLoopback;
             return _scopeFactory().IsEligiblePeer(remote);
         }
 
-        private async Task SendErrorAsync(SslStream ssl, string code, CancellationToken cancellationToken)
+        private async Task SendErrorAsync(
+            SslStream ssl,
+            string code,
+            CancellationToken cancellationToken,
+            int fileIndex = -1,
+            int completed = 0)
         {
-            var error = new ErrorDto { Code = code, Message = Sanitizer.MapError(code) };
+            var error = new ErrorDto
+            {
+                Code = code,
+                Message = Sanitizer.MapError(code),
+                FileIndex = fileIndex,
+                Completed = completed
+            };
             await WriteJsonAsync(ssl, FrameType.Error, error, cancellationToken).ConfigureAwait(false);
         }
 

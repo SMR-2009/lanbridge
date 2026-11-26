@@ -7,6 +7,7 @@ using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -246,14 +247,270 @@ namespace LanBridge.Core
             }
         }
 
-        public Task<TransferResult> SendAsync(
+        public async Task<TransferResult> SendAsync(
             PeerEndpoint peer,
             IReadOnlyList<string> filePaths,
             CancellationToken cancellationToken = default)
         {
             if (peer == null) throw new ArgumentNullException(nameof(peer));
+            if (filePaths == null) throw new ArgumentNullException(nameof(filePaths));
             cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(TransferResult.Fail("not_implemented"));
+
+            var files = BuildFiles(filePaths);
+            ClientSession session = null;
+            var completed = 0;
+
+            try
+            {
+                session = await OpenSessionAsync(peer, "send", cancellationToken).ConfigureAwait(false);
+                if (!session.Ack.Paired || !_peers.ContainsFingerprint(peer.Fingerprint))
+                    return TransferResult.Fail("not_paired", 0, files.Count);
+                if (session.Ack.Busy)
+                    return TransferResult.Fail("busy_inbound", 0, files.Count);
+
+                var offer = new TransferOffer(peer, Guid.NewGuid().ToString("N"), files);
+                var offerDto = new OfferDto
+                {
+                    TransferId = offer.TransferId,
+                    TotalSize = offer.TotalSize,
+                    Files = files.Select(file => new OfferFileDto { Name = file.Name, Size = file.Size }).ToList()
+                };
+
+                await WriteJsonAsync(session.Stream, FrameType.Offer, offerDto, cancellationToken).ConfigureAwait(false);
+
+                Frame decision;
+                try
+                {
+                    decision = await TimeoutIo.ReadFrameAsync(
+                        session.Stream,
+                        _options.OfferTimeout,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    return TransferResult.Fail("timeout", 0, files.Count);
+                }
+
+                if (decision.Type == FrameType.Error)
+                {
+                    var error = ProtocolJson.Deserialize<ErrorDto>(decision.Payload);
+                    return TransferResult.Fail(error.Code, 0, files.Count);
+                }
+
+                if (decision.Type == FrameType.Reject)
+                {
+                    var reject = ProtocolJson.Deserialize<RejectDto>(decision.Payload);
+                    return TransferResult.Fail(
+                        string.Equals(reject.Reason, "disk_full", StringComparison.OrdinalIgnoreCase)
+                            ? "disk_full"
+                            : "offer_rejected",
+                        0,
+                        files.Count);
+                }
+
+                if (decision.Type != FrameType.Accept)
+                    return TransferResult.Fail("offer_rejected", 0, files.Count);
+
+                var progress = _prompter.CreateSendProgress(offer, cancellationToken);
+
+                for (var index = 0; index < files.Count; index++)
+                {
+                    var file = files[index];
+                    await WriteJsonAsync(
+                        session.Stream,
+                        FrameType.FileBegin,
+                        new FileBeginDto { Index = index, Name = file.Name, Size = file.Size },
+                        cancellationToken).ConfigureAwait(false);
+
+                    using (var stream = new FileStream(
+                        file.LocalPath,
+                        FileMode.Open,
+                        FileAccess.Read,
+                        FileShare.Read,
+                        65536,
+                        FileOptions.SequentialScan | FileOptions.Asynchronous))
+                    using (var sha = SHA256.Create())
+                    {
+                        var buffer = new byte[65536];
+                        var hashScratch = new byte[65536];
+                        long sent = 0;
+
+                        while (true)
+                        {
+                            var read = await stream.ReadAsync(buffer, 0, buffer.Length, cancellationToken).ConfigureAwait(false);
+                            if (read <= 0) break;
+
+                            sha.TransformBlock(buffer, 0, read, hashScratch, 0);
+                            var payload = new byte[4 + read];
+                            WriteInt32(payload, 0, index);
+                            Buffer.BlockCopy(buffer, 0, payload, 4, read);
+                            await TimeoutIo.WriteFrameAsync(
+                                session.Stream,
+                                FrameType.FileData,
+                                payload,
+                                _options.FileIdleTimeout,
+                                cancellationToken).ConfigureAwait(false);
+
+                            sent += read;
+                            progress.Report(new TransferProgress
+                            {
+                                FileName = file.Name,
+                                FileIndex = index,
+                                FileCount = files.Count,
+                                BytesTransferred = sent,
+                                TotalBytes = file.Size
+                            });
+                        }
+
+                        sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                        await WriteJsonAsync(
+                            session.Stream,
+                            FrameType.FileEnd,
+                            new FileEndDto { Index = index, Sha256 = Hex(sha.Hash) },
+                            cancellationToken).ConfigureAwait(false);
+                    }
+
+                    Frame resultFrame;
+                    try
+                    {
+                        resultFrame = await TimeoutIo.ReadFrameAsync(
+                            session.Stream,
+                            _options.ControlTimeout,
+                            cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (TimeoutException)
+                    {
+                        return TransferResult.Fail("timeout", completed, files.Count);
+                    }
+
+                    if (resultFrame.Type == FrameType.FileOk)
+                    {
+                        completed++;
+                        progress.Report(new TransferProgress
+                        {
+                            FileName = file.Name,
+                            FileIndex = index,
+                            FileCount = files.Count,
+                            BytesTransferred = file.Size,
+                            TotalBytes = file.Size,
+                            IsComplete = true
+                        });
+                        continue;
+                    }
+
+                    if (resultFrame.Type == FrameType.FileError)
+                    {
+                        var error = ProtocolJson.Deserialize<FileErrorDto>(resultFrame.Payload);
+                        _log.Info("Receiver rejected " + file.Name + ": " + Sanitizer.SanitizeLogValue(error.Code));
+                        return TransferResult.Fail("transfer_failed", completed, files.Count);
+                    }
+
+                    if (resultFrame.Type == FrameType.Error)
+                    {
+                        var error = ProtocolJson.Deserialize<ErrorDto>(resultFrame.Payload);
+                        return TransferResult.Fail(
+                            error.Code,
+                            error.Completed > 0 ? error.Completed : completed,
+                            files.Count);
+                    }
+
+                    return TransferResult.Fail("transfer_failed", completed, files.Count);
+                }
+
+                await WriteJsonAsync(
+                    session.Stream,
+                    FrameType.Done,
+                    new DoneDto { TransferId = offer.TransferId },
+                    cancellationToken).ConfigureAwait(false);
+                var done = await TimeoutIo.ReadFrameAsync(
+                    session.Stream,
+                    _options.ControlTimeout,
+                    cancellationToken).ConfigureAwait(false);
+                if (done.Type != FrameType.DoneAck)
+                    return TransferResult.Fail("done_failed", completed, files.Count);
+
+                return TransferResult.Ok(completed, files.Count);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                if (session != null) await SendCancelAsync(session.Stream).ConfigureAwait(false);
+                return TransferResult.Fail("cancelled", completed, files.Count);
+            }
+            catch (ProtocolException ex)
+            {
+                _log.Info("Send to " + peer.Name + " failed: " + Sanitizer.SanitizeLogValue(ex.Code));
+                return TransferResult.Fail(ex.Code, completed, files.Count);
+            }
+            catch (Exception ex) when (
+                ex is IOException ||
+                ex is AuthenticationException ||
+                ex is SocketException ||
+                ex is TimeoutException)
+            {
+                _log.Info("Send to " + peer.Name + " failed: " + ex.GetType().Name + ": " + Sanitizer.SanitizeLogValue(ex.Message));
+                return TransferResult.Fail(ex is TimeoutException ? "timeout" : "transfer_failed", completed, files.Count);
+            }
+            finally
+            {
+                session?.Dispose();
+            }
+        }
+
+        private Task WriteJsonAsync<T>(SslStream ssl, FrameType type, T value, CancellationToken cancellationToken)
+        {
+            return TimeoutIo.WriteFrameAsync(
+                ssl,
+                type,
+                ProtocolJson.Serialize(value),
+                _options.ControlTimeout,
+                cancellationToken);
+        }
+
+        private static List<TransferFile> BuildFiles(IReadOnlyList<string> filePaths)
+        {
+            if (filePaths.Count == 0 || filePaths.Count > 5000)
+                throw new ArgumentException("Select between 1 and 5,000 files.", nameof(filePaths));
+
+            var files = new List<TransferFile>();
+            foreach (var path in filePaths)
+            {
+                var info = new FileInfo(path);
+                if (!info.Exists) throw new FileNotFoundException("File not found.", path);
+                files.Add(new TransferFile(info.Name, info.Length, info.FullName));
+            }
+            return files;
+        }
+
+        private static async Task SendCancelAsync(SslStream stream)
+        {
+            try
+            {
+                await TimeoutIo.WriteFrameAsync(
+                    stream,
+                    FrameType.Cancel,
+                    ProtocolJson.Serialize(new CancelDto { Reason = "cancelled" }),
+                    TimeSpan.FromSeconds(2),
+                    CancellationToken.None).ConfigureAwait(false);
+            }
+            catch
+            {
+            }
+        }
+
+        private static string Hex(byte[] bytes)
+        {
+            if (bytes == null) return string.Empty;
+            var builder = new StringBuilder(bytes.Length * 2);
+            foreach (var value in bytes) builder.Append(value.ToString("x2"));
+            return builder.ToString();
+        }
+
+        private static void WriteInt32(byte[] buffer, int offset, int value)
+        {
+            buffer[offset] = (byte)(value >> 24);
+            buffer[offset + 1] = (byte)(value >> 16);
+            buffer[offset + 2] = (byte)(value >> 8);
+            buffer[offset + 3] = (byte)value;
         }
 
         private PeerRecord UpsertServerPeer(PeerEndpoint peer, HelloAckDto ack)
