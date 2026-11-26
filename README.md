@@ -31,11 +31,35 @@ The installer:
 
 To skip the firewall step, run the installer with `-NoFirewall`. To skip start at sign-in, use `-NoStartup`.
 
-If you prefer a manual install, download `lanbridge-v0.1.2-win.zip` from the [latest release](https://github.com/SMR-2009/lanbridge/releases/latest), extract it, and run:
+If you prefer a manual install, download `lanbridge-v0.1.3-win.zip` from the [latest release](https://github.com/SMR-2009/lanbridge/releases/latest), extract it, and run:
 
 ```powershell
 .\install.ps1 -SourceDir .
 ```
+
+### Updating
+
+LanBridge does not update itself in the background. To update, quit it from the tray and run the install command again. The installer verifies the new build, replaces `LanBridge.exe`, and preserves:
+
+- your device name and settings in `%APPDATA%\LanBridge`;
+- your pairing pins, so you do not pair again;
+- received files in your receive folder;
+- the Start Menu shortcut, start at sign-in, and firewall rule.
+
+There is no silent updater because the binary is not code-signed. A future update check should be user-initiated and should open the release page rather than downloading and running code silently.
+
+### Repair
+
+Re-running the installer is also the repair path. It is idempotent and does not touch received files or pairing data.
+
+The app repairs what it safely can on its own:
+
+- unreadable settings are quarantined and recreated with defaults;
+- unreadable pairing data is quarantined, so you pair again;
+- a damaged identity is replaced, which intentionally requires re-pairing;
+- stale `.part` files older than one hour are removed at startup.
+
+For firewall problems, open **Settings** and use **Repair firewall rule**. If the app will not start at all, run the install command again; if that cannot repair it, uninstall and install again.
 
 ### Uninstall
 

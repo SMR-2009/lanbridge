@@ -136,6 +136,12 @@ namespace LanBridge
                     }
                 }
 
+                ReceiveFolderCleanup.DeleteStalePartFiles(
+                    config.ReceiveFolder,
+                    DateTime.UtcNow,
+                    TimeSpan.FromHours(1),
+                    log);
+
                 identity = DeviceIdentity.LoadOrCreate(
                     Path.Combine(appData, "identity"),
                     config.DeviceId,
