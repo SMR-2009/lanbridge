@@ -1,6 +1,8 @@
 using System;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace LanBridge.Core
@@ -24,7 +26,7 @@ namespace LanBridge.Core
                 throw new ArgumentNullException(nameof(exePath));
 
             return "advfirewall firewall set rule name=\"" + RuleName + "\" new "
-                 + "program=\"" + exePath + "\" enable=yes profile=private,public remoteip=LocalSubnet";
+                 + "dir=in action=allow program=\"" + exePath + "\" enable=yes profile=private,public remoteip=LocalSubnet";
         }
 
         public static string BuildDeleteRuleArguments()
@@ -47,8 +49,44 @@ namespace LanBridge.Core
             var exitCode = RunNetsh(
                 "advfirewall firewall show rule name=\"" + RuleName + "\" verbose",
                 out var output);
-            return exitCode == 0 &&
-                   output.IndexOf(exePath, StringComparison.OrdinalIgnoreCase) >= 0;
+            return exitCode == 0 && IsRuleOutputValid(output, exePath);
+        }
+
+        public static bool IsRuleOutputValid(string output, string exePath)
+        {
+            if (string.IsNullOrWhiteSpace(output) || string.IsNullOrWhiteSpace(exePath))
+                return false;
+
+            return string.Equals(ReadField(output, "Enabled"), "Yes", StringComparison.OrdinalIgnoreCase) &&
+                   string.Equals(ReadField(output, "Direction"), "In", StringComparison.OrdinalIgnoreCase) &&
+                   string.Equals(ReadField(output, "Action"), "Allow", StringComparison.OrdinalIgnoreCase) &&
+                   ContainsProfile(ReadField(output, "Profiles"), "Private") &&
+                   ContainsProfile(ReadField(output, "Profiles"), "Public") &&
+                   string.Equals(ReadField(output, "RemoteIP"), "LocalSubnet", StringComparison.OrdinalIgnoreCase) &&
+                   string.Equals(
+                       ReadField(output, "Program"),
+                       Path.GetFullPath(exePath),
+                       StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string ReadField(string output, string field)
+        {
+            foreach (var line in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var colon = line.IndexOf(':');
+                if (colon <= 0) continue;
+                if (!string.Equals(line.Substring(0, colon).Trim(), field, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                return line.Substring(colon + 1).Trim();
+            }
+
+            return string.Empty;
+        }
+
+        private static bool ContainsProfile(string profiles, string profile)
+        {
+            return profiles.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                .Any(value => string.Equals(value.Trim(), profile, StringComparison.OrdinalIgnoreCase));
         }
 
         public static Task<bool> AddRuleAsync(string exePath)
@@ -85,7 +123,11 @@ namespace LanBridge.Core
                 using (var process = Process.Start(info))
                 {
                     if (process == null) return false;
-                    process.WaitForExit();
+                    if (!process.WaitForExit(120000))
+                    {
+                        try { process.Kill(); } catch { }
+                        return false;
+                    }
                     return process.ExitCode == 0;
                 }
             }
@@ -119,7 +161,11 @@ namespace LanBridge.Core
                     if (process == null) return -1;
                     var standard = process.StandardOutput.ReadToEnd();
                     var error = process.StandardError.ReadToEnd();
-                    process.WaitForExit();
+                    if (!process.WaitForExit(10000))
+                    {
+                        try { process.Kill(); } catch { }
+                        return -1;
+                    }
                     output = standard + error;
                     return process.ExitCode;
                 }

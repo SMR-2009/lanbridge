@@ -16,15 +16,20 @@ namespace LanBridge.Tests
         }
 
         [Fact]
-        public void DeletesOnlyExpiredPartFiles()
+        public void DeletesOnlyExpiredPartsInsideThePrivateFolder()
         {
-            var expired = Path.Combine(_folder, "holiday.zip.part");
-            var fresh = Path.Combine(_folder, "notes.pdf.part");
+            var parts = Path.Combine(_folder, FileReceiver.PartFolderName);
+            Directory.CreateDirectory(parts);
+            var expired = Path.Combine(parts, "holiday.zip.part");
+            var fresh = Path.Combine(parts, "notes.pdf.part");
             var finished = Path.Combine(_folder, "done.zip");
+            var userFileNamedPart = Path.Combine(_folder, "report.part");
             File.WriteAllText(expired, "partial");
             File.WriteAllText(fresh, "partial");
             File.WriteAllText(finished, "complete");
+            File.WriteAllText(userFileNamedPart, "user data");
             File.SetLastWriteTimeUtc(expired, DateTime.UtcNow.AddHours(-2));
+            File.SetLastWriteTimeUtc(userFileNamedPart, DateTime.UtcNow.AddHours(-2));
 
             var removed = ReceiveFolderCleanup.DeleteStalePartFiles(
                 _folder,
@@ -35,6 +40,7 @@ namespace LanBridge.Tests
             Assert.False(File.Exists(expired));
             Assert.True(File.Exists(fresh));
             Assert.True(File.Exists(finished));
+            Assert.True(File.Exists(userFileNamedPart));
         }
 
         [Fact]

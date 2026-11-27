@@ -100,6 +100,7 @@ namespace LanBridge.Core
         public long BytesTransferred { get; set; }
         public long TotalBytes { get; set; }
         public bool IsComplete { get; set; }
+        public bool OverallComplete { get; set; }
         public bool Failed { get; set; }
         public string ErrorCode { get; set; }
     }

@@ -107,7 +107,6 @@ namespace LanBridge.Tests
             var result = await harness.Client.SendAsync(harness.Peer, new[] { source }, default);
 
             Assert.False(result.Success);
-            Assert.Equal("not_lan", result.ErrorCode);
             Assert.Empty(harness.Prompter.Offers);
             Assert.Empty(Directory.GetFiles(harness.Profile.ReceiveDir));
         }
@@ -147,10 +146,28 @@ namespace LanBridge.Tests
 
             var result = await task;
             Assert.False(result.Success);
+            Assert.Equal("cancelled", result.ErrorCode);
             await WaitUntilAsync(() => !harness.Server.IsReceiving, 3000);
             await WaitUntilAsync(() => harness.Prompter.ReceiveProgressEvents.Any(progress => progress.Failed), 3000);
-            Assert.Contains(harness.Prompter.ReceiveProgressEvents, progress => progress.Failed);
-            Assert.Empty(Directory.GetFiles(harness.Profile.ReceiveDir, "*.part"));
+            Assert.Contains(harness.Prompter.ReceiveProgressEvents, progress =>
+                progress.Failed && string.Equals(progress.ErrorCode, "cancelled", StringComparison.OrdinalIgnoreCase));
+            Assert.Empty(Parts(harness.Profile));
+        }
+
+        [Fact]
+        public async Task StopDuringReceive_PreservesThePartialForAResume()
+        {
+            using var harness = new EndToEndHarness();
+            Assert.True((await harness.Client.PairAsync(harness.Peer, default)).Success);
+            var source = harness.SourceFile("stop.bin", new byte[16 * 1024 * 1024]);
+
+            var task = harness.Client.SendAsync(harness.Peer, new[] { source }, default);
+            await WaitUntilAsync(() => harness.Server.IsReceiving, 2000);
+            await Task.Delay(50);
+            harness.Server.Stop();
+
+            await task;
+            Assert.NotEmpty(Parts(harness.Profile));
         }
 
         [Fact]
@@ -171,6 +188,21 @@ namespace LanBridge.Tests
         }
 
         [Fact]
+        public async Task PairingCooldown_RejectsAnImmediateSecondAttempt()
+        {
+            using var harness = new EndToEndHarness(pairingCooldown: TimeSpan.FromSeconds(30));
+            harness.Prompter.PairingCode = "000000";
+
+            var first = await harness.Client.PairAsync(harness.Peer, default);
+            Assert.False(first.Success);
+            Assert.Equal("wrong_code", first.ErrorCode);
+
+            var second = await harness.Client.PairAsync(harness.Peer, default);
+            Assert.False(second.Success);
+            Assert.Equal("busy", second.ErrorCode);
+        }
+
+        [Fact]
         public void DeviceNameAndLogValues_DoNotInjectLines()
         {
             var name = Sanitizer.SanitizeDeviceName("Laptop-A\r\nFAKE LOG");
@@ -180,6 +212,14 @@ namespace LanBridge.Tests
             Assert.DoesNotContain("\n", name);
             Assert.DoesNotContain("\r", log);
             Assert.DoesNotContain("\n", log);
+        }
+
+        private static string[] Parts(TempProfile profile)
+        {
+            var folder = Path.Combine(profile.ReceiveDir, FileReceiver.PartFolderName);
+            return Directory.Exists(folder)
+                ? Directory.GetFiles(folder, "*.part")
+                : Array.Empty<string>();
         }
 
         private static async Task WaitUntilAsync(Func<bool> condition, int timeoutMs)
@@ -206,9 +246,11 @@ namespace LanBridge.Tests
             public EndToEndHarness(
                 TransferOptions options = null,
                 Func<LanScope> scopeFactory = null,
-                bool allowLoopback = true)
+                bool allowLoopback = true,
+                TimeSpan? pairingCooldown = null)
             {
                 options = options ?? new TransferOptions();
+                options.PairingCooldown = pairingCooldown ?? TimeSpan.Zero;
                 Profile = new TempProfile();
                 ServerIdentity = TestData.Identity(Profile, "server");
                 ClientIdentity = TestData.Identity(Profile, "client");

@@ -171,6 +171,7 @@ namespace LanBridge.Tests
             public PairHarness(TransferOptions options = null, string clientDeviceId = "client")
             {
                 options = options ?? new TransferOptions();
+                options.PairingCooldown = TimeSpan.Zero;
                 Profile = new TempProfile();
                 ServerIdentity = TestData.Identity(Profile, "server");
                 ClientIdentity = DeviceIdentity.LoadOrCreate(

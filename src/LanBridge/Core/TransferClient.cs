@@ -294,7 +294,17 @@ namespace LanBridge.Core
             if (filePaths == null) throw new ArgumentNullException(nameof(filePaths));
             cancellationToken.ThrowIfCancellationRequested();
 
-            var files = BuildFiles(filePaths);
+            List<TransferFile> files;
+            try
+            {
+                files = BuildFiles(filePaths);
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException)
+            {
+                _log.Warn("Could not read the selected files: " + Sanitizer.SanitizeLogValue(ex.Message));
+                return TransferResult.Fail("transfer_failed", 0, 0);
+            }
+
             ClientSession session = null;
             var completed = 0;
             IProgress<TransferProgress> progress = null;
@@ -363,6 +373,7 @@ namespace LanBridge.Core
                 }
                 catch (ProtocolException)
                 {
+                    await SendCancelAsync(session.Stream, "invalid_accept").ConfigureAwait(false);
                     return TransferResult.Fail("invalid_accept", completed, files.Count);
                 }
 
@@ -378,6 +389,7 @@ namespace LanBridge.Core
                     var resumeOffset = resume == null ? 0 : resume.Offset;
                     if (resumeOffset < 0 || resumeOffset > file.Size)
                     {
+                        await SendCancelAsync(session.Stream, "invalid_accept").ConfigureAwait(false);
                         failureCode = "invalid_accept";
                         return TransferResult.Fail("invalid_accept", completed, files.Count);
                     }
@@ -417,7 +429,10 @@ namespace LanBridge.Core
                                         0,
                                         (int)Math.Min(hashScratch.Length, remainingPrefix));
                                     if (read <= 0)
+                                    {
+                                        await SendCancelAsync(session.Stream, "resume_mismatch").ConfigureAwait(false);
                                         return TransferResult.Fail("resume_mismatch", completed, files.Count);
+                                    }
 
                                     prefixSha.TransformBlock(hashScratch, 0, read, frameBuffer, 0);
                                     sha.TransformBlock(hashScratch, 0, read, frameBuffer, 0);
@@ -438,6 +453,19 @@ namespace LanBridge.Core
                         while (true)
                         {
                             cancellationToken.ThrowIfCancellationRequested();
+                            if (session.Tcp.Client.Available > 0)
+                            {
+                                var pending = await TimeoutIo.ReadFrameAsync(
+                                    session.Stream,
+                                    _options.ControlTimeout,
+                                    cancellationToken).ConfigureAwait(false);
+                                if (pending.Type == FrameType.Cancel)
+                                {
+                                    failureCode = "cancelled";
+                                    return TransferResult.Fail("cancelled", completed, files.Count);
+                                }
+                            }
+
                             var read = stream.Read(
                                 frameBuffer,
                                 FrameCodec.FileDataHeaderSize,
@@ -489,6 +517,12 @@ namespace LanBridge.Core
                     {
                         failureCode = "timeout";
                         return TransferResult.Fail("timeout", completed, files.Count);
+                    }
+
+                    if (resultFrame.Type == FrameType.Cancel)
+                    {
+                        failureCode = "cancelled";
+                        return TransferResult.Fail("cancelled", completed, files.Count);
                     }
 
                     if (resultFrame.Type == FrameType.FileOk)
@@ -543,7 +577,30 @@ namespace LanBridge.Core
                     return TransferResult.Fail("done_failed", completed, files.Count);
                 }
 
+                DoneAckDto doneAck;
+                try
+                {
+                    doneAck = ProtocolJson.Deserialize<DoneAckDto>(done.Payload);
+                }
+                catch (ProtocolException)
+                {
+                    return TransferResult.Fail("done_failed", completed, files.Count);
+                }
+
+                if (!string.Equals(doneAck.TransferId, offer.TransferId, StringComparison.Ordinal))
+                    return TransferResult.Fail("done_failed", completed, files.Count);
+
                 transferCompleted = true;
+                progress.Report(new TransferProgress
+                {
+                    FileName = files[files.Count - 1].Name,
+                    FileIndex = files.Count - 1,
+                    FileCount = files.Count,
+                    BytesTransferred = offer.TotalSize,
+                    TotalBytes = offer.TotalSize,
+                    IsComplete = true,
+                    OverallComplete = true
+                });
                 _log.Info("Send completed to " + Sanitizer.SanitizeLogValue(peer.Name)
                     + ": " + completed + " file(s).");
                 return TransferResult.Ok(completed, files.Count);
@@ -566,6 +623,12 @@ namespace LanBridge.Core
                 ex is SocketException ||
                 ex is TimeoutException)
             {
+                if (session != null)
+                {
+                    try { await SendCancelAsync(session.Stream, "transfer_failed").ConfigureAwait(false); }
+                    catch { }
+                }
+
                 _log.Info("Send to " + peer.Name + " failed: " + ex.GetType().Name + ": " + Sanitizer.SanitizeLogValue(ex.Message));
                 failureCode = ex is TimeoutException ? "timeout" : "transfer_failed";
                 return TransferResult.Fail(failureCode, completed, files.Count);
@@ -605,7 +668,10 @@ namespace LanBridge.Core
             {
                 var info = new FileInfo(path);
                 if (!info.Exists) throw new FileNotFoundException("File not found.", path);
-                files.Add(new TransferFile(info.Name, info.Length, info.FullName));
+                files.Add(new TransferFile(
+                    PathGuard.SanitizeFileName(info.Name),
+                    info.Length,
+                    info.FullName));
             }
             return files;
         }
@@ -695,10 +761,14 @@ namespace LanBridge.Core
                     ssl.AuthenticateAsClientAsync(
                         "lanbridge",
                         new X509CertificateCollection { _identity.Certificate },
-                        SslProtocols.Tls12,
+                        SslProtocols.None,
                         false),
                     _options.ControlTimeout,
                     cancellationToken).ConfigureAwait(false);
+
+                _log.Info("TLS negotiated (client): " + ssl.SslProtocol
+                    + "; cipher=" + ssl.CipherAlgorithm + "-" + ssl.CipherStrength
+                    + "; hash=" + ssl.HashAlgorithm);
 
                 var clientNonce = NewNonceBytes();
                 var hello = new HelloDto

@@ -33,6 +33,7 @@ namespace LanBridge
         private CancellationTokenSource _outboundCts;
         private bool _sending;
         private bool _disposed;
+        private bool _manualAddBusy;
 
         public TrayApplicationContext(
             AppConfig config,
@@ -54,7 +55,10 @@ namespace LanBridge
             _uiHost = new Control();
             _uiHost.CreateControl();
             _ui = new WinFormsUi(_log, CancelInbound, CancelOutbound, _uiHost);
-            var options = new TransferOptions();
+            var options = new TransferOptions
+            {
+                MaxReceiveBytes = _config.MaxReceiveBytes
+            };
 
             _server = new TransferServer(
                 _config.TcpPort,
@@ -66,7 +70,8 @@ namespace LanBridge
                 _log,
                 options)
             {
-                AutoAcceptFromPaired = _config.AutoAcceptFromPaired
+                AutoAcceptFromPaired = _config.AutoAcceptFromPaired,
+                Discoverable = _config.Discoverable
             };
 
             _client = new TransferClient(
@@ -153,6 +158,7 @@ namespace LanBridge
         }
 
         public bool Discoverable => _config.Discoverable;
+        public bool FirewallRulePresent => _config.FirewallRuleAdded;
 
         public Task<PairingAttemptResult> PairAsync(DeviceRow row)
         {
@@ -269,6 +275,53 @@ namespace LanBridge
             }
         }
 
+        public async Task CheckForUpdatesAsync()
+        {
+            try
+            {
+                var current = typeof(TrayApplicationContext).Assembly.GetName().Version;
+                var info = await UpdateChecker.CheckAsync(current);
+                if (!info.IsNewer)
+                {
+                    MessageBox.Show(
+                        "LanBridge " + current.ToString(3) + " is up to date.",
+                        "Check for updates",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                    return;
+                }
+
+                if (!info.ReleaseUrl.StartsWith(
+                        "https://github.com/SMR-2009/lanbridge/releases/",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidDataException("The update link was not a LanBridge release page.");
+                }
+
+                var answer = MessageBox.Show(
+                    "LanBridge " + info.LatestVersion + " is available.\n\n"
+                    + "Open the release page to download the installer? Your settings and pairings are kept.",
+                    "Update available",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Information);
+                if (answer != DialogResult.Yes) return;
+
+                Process.Start(new ProcessStartInfo(info.ReleaseUrl) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                _log.Warn("Update check failed: " + Sanitizer.SanitizeLogValue(ex.Message));
+                if (!_disposed)
+                {
+                    MessageBox.Show(
+                        "Could not check for updates. Check your internet connection and try again.",
+                        "Check for updates",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                }
+            }
+        }
+
         private ContextMenuStrip BuildMenu()
         {
             var menu = new ContextMenuStrip { Font = new Font("Segoe UI", 9.5f) };
@@ -317,7 +370,11 @@ namespace LanBridge
                 foreach (var peer in peers)
                 {
                     var item = new ToolStripMenuItem(Sanitizer.SanitizeDeviceName(peer.Name));
-                    item.Click += async (s, e) => await SendToPeerAsync(peer);
+                    item.Click += async (s, e) =>
+                    {
+                        try { await SendToPeerAsync(peer); }
+                        catch (Exception ex) { _log.Error("Tray send failed", ex); }
+                    };
                     _devicesMenu.DropDownItems.Add(item);
                 }
             }
@@ -337,25 +394,49 @@ namespace LanBridge
 
         public async Task AddManualDeviceAsync()
         {
-            using (var form = new ManualEndpointForm())
+            if (_manualAddBusy) return;
+            _manualAddBusy = true;
+            try
             {
-                if (form.ShowDialog() != DialogResult.OK) return;
-
-                _log.Info("Manual pairing requested for " + form.Address + ":" + form.Port);
-                var result = await _client.PairAsync(form.Address, form.Port);
-                if (!result.Success)
+                using (var form = new ManualEndpointForm())
                 {
-                    _log.Info("Manual pairing ended: " + Sanitizer.SanitizeLogValue(result.ErrorCode));
+                    if (form.ShowDialog() != DialogResult.OK) return;
+
+                    _log.Info("Manual pairing requested for " + form.Address + ":" + form.Port);
+                    var result = await _client.PairAsync(form.Address, form.Port);
+                    if (!result.Success)
+                    {
+                        _log.Info("Manual pairing ended: " + Sanitizer.SanitizeLogValue(result.ErrorCode));
+                        if (!_disposed)
+                        {
+                            MessageBox.Show(
+                                Sanitizer.MapError(result.ErrorCode),
+                                "LanBridge",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Warning);
+                        }
+                        return;
+                    }
+
+                    _discovery.Refresh();
+                    OpenDeviceList(null);
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Error("Manual pairing failed", ex);
+                if (!_disposed)
+                {
                     MessageBox.Show(
-                        Sanitizer.MapError(result.ErrorCode),
+                        "Could not pair with that address. Check the IP, the port, and that LanBridge is running on the other laptop.",
                         "LanBridge",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Warning);
-                    return;
                 }
-
-                _discovery.Refresh();
-                OpenDeviceList(null);
+            }
+            finally
+            {
+                _manualAddBusy = false;
             }
         }
 
@@ -427,6 +508,7 @@ namespace LanBridge
             try { _config.Save(_configPath); }
             catch (Exception ex) { _log.Error("Could not save settings", ex); }
 
+            _server.Discoverable = visible;
             _discovery.Discoverable = visible;
             _visibleItem.Checked = visible;
             _log.Info("Visible on network: " + visible);
@@ -448,6 +530,8 @@ namespace LanBridge
             }
 
             _server.AutoAcceptFromPaired = _config.AutoAcceptFromPaired;
+            _server.Discoverable = _config.Discoverable;
+            _server.MaxReceiveBytes = _config.MaxReceiveBytes;
             _discovery.Discoverable = _config.Discoverable;
             _visibleItem.Checked = _config.Discoverable;
         }

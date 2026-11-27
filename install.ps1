@@ -79,7 +79,7 @@ LanBridge installer
 
 Usage:
   irm https://github.com/SMR-2009/lanbridge/releases/latest/download/install.ps1 | iex
-  .\install.ps1 [-Version v0.1.7] [-InstallDir PATH] [-NoShortcut]
+  .\install.ps1 [-Version vX.Y.Z] [-InstallDir PATH] [-NoShortcut]
                 [-NoFirewall] [-SkipLaunch] [-SourceDir PATH] [-Help]
 
   -SourceDir  Install from local release artifacts instead of GitHub.
@@ -245,12 +245,22 @@ try {
         }
     }
 
-    if (Get-Process -Name "LanBridge" -ErrorAction SilentlyContinue) {
-        throw "LanBridge is running. Quit it from the tray, then run the installer again."
-    }
-
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     $target = Join-Path $InstallDir "LanBridge.exe"
+
+    $targetRunning = $false
+    Get-Process -Name "LanBridge" -ErrorAction SilentlyContinue | ForEach-Object {
+        try {
+            if ([string]::Equals($_.Path, $target, [StringComparison]::OrdinalIgnoreCase)) {
+                $targetRunning = $true
+            }
+        }
+        catch {
+        }
+    }
+    if ($targetRunning) {
+        throw "LanBridge is running from $InstallDir. Quit it from the tray, then run the installer again."
+    }
     Copy-Item -LiteralPath $exe -Destination $target -Force
     if ($config -and (Test-Path -LiteralPath $config)) {
         Copy-Item -LiteralPath $config -Destination ($target + ".config") -Force

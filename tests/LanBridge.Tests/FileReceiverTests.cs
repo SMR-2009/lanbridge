@@ -22,7 +22,7 @@ namespace LanBridge.Tests
                 Assert.True(File.Exists(receiver.FinalPath));
                 Assert.Equal(bytes, File.ReadAllBytes(receiver.FinalPath));
             }
-            Assert.Empty(Directory.GetFiles(profile.ReceiveDir, "*.part"));
+            Assert.Empty(Directory.GetFiles(PartsDir(profile), "*.part"));
         }
 
         [Fact]
@@ -34,7 +34,7 @@ namespace LanBridge.Tests
             receiver.Write(bytes, 0, bytes.Length);
             Assert.Throws<InvalidDataException>(() => receiver.Complete(new string('0', 64)));
             receiver.Dispose();
-            Assert.Empty(Directory.GetFiles(profile.ReceiveDir, "*.part"));
+            Assert.Empty(Directory.GetFiles(PartsDir(profile), "*.part"));
             Assert.False(File.Exists(Path.Combine(profile.ReceiveDir, "bad.txt")));
         }
 
@@ -47,7 +47,7 @@ namespace LanBridge.Tests
             receiver.Write(bytes, 0, bytes.Length);
             Assert.Throws<InvalidDataException>(() => receiver.Complete(Sha256(bytes)));
             receiver.Dispose();
-            Assert.Empty(Directory.GetFiles(profile.ReceiveDir, "*.part"));
+            Assert.Empty(Directory.GetFiles(PartsDir(profile), "*.part"));
         }
 
         [Fact]
@@ -76,7 +76,7 @@ namespace LanBridge.Tests
                 Assert.Equal(0, new FileInfo(receiver.FinalPath).Length);
             }
 
-            Assert.Empty(Directory.GetFiles(profile.ReceiveDir, "*.part"));
+            Assert.Empty(Directory.GetFiles(PartsDir(profile), "*.part"));
         }
 
         [Fact]
@@ -106,6 +106,41 @@ namespace LanBridge.Tests
 
             Assert.True(File.Exists(Path.Combine(profile.ReceiveDir, "evil.txt")));
             Assert.False(File.Exists(Path.Combine(profile.Root, "evil.txt")));
+        }
+
+        [Fact]
+        public void SidecarOutsidePrivatePartsFolder_IsIgnored()
+        {
+            using var profile = new TempProfile();
+            var victim = Path.Combine(profile.ReceiveDir, "victim.txt");
+            File.WriteAllText(victim, "private");
+            File.WriteAllText(
+                Path.Combine(profile.ReceiveDir, "evil.part.resume"),
+                "{\"name\":\"victim.txt\",\"size\":7,\"part\":\"victim.txt\",\"bytes\":7,\"prefixSha256\":\"x\"}");
+
+            Assert.Null(FileReceiver.FindResume(profile.ReceiveDir, "victim.txt", 7));
+            Assert.True(File.Exists(victim));
+        }
+
+        [Fact]
+        public void SidecarMustMatchItsOwnPartFile()
+        {
+            using var profile = new TempProfile();
+            var parts = PartsDir(profile);
+            Directory.CreateDirectory(parts);
+            var victim = Path.Combine(parts, "victim.part");
+            File.WriteAllText(victim, "private");
+            File.WriteAllText(
+                Path.Combine(parts, "evil.part.resume"),
+                "{\"name\":\"victim.txt\",\"size\":7,\"part\":\"victim.part\",\"bytes\":7,\"prefixSha256\":\"x\"}");
+
+            Assert.Null(FileReceiver.FindResume(profile.ReceiveDir, "victim.txt", 7));
+            Assert.True(File.Exists(victim));
+        }
+
+        private static string PartsDir(TempProfile profile)
+        {
+            return Path.Combine(profile.ReceiveDir, FileReceiver.PartFolderName);
         }
 
         private static string Sha256(byte[] bytes)

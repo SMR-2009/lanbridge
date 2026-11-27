@@ -2,6 +2,42 @@
 
 All notable changes to LanBridge are documented here. The format is based on Keep a Changelog, and this project uses semantic versioning.
 
+## [0.1.8] - 2026-11-28
+
+### Security
+
+- Partial transfers now live in a private `parts` folder under the receive folder, and resume sidecars must match their own `.part` file. A sidecar cannot point at an unrelated file.
+- Receive offers have a configurable maximum size (100 GB by default) and the free-space check fails closed with a 1 GB reserve.
+- Non-LAN connections are rejected before the TLS handshake, and each source IP has a bounded connection count.
+- Pairing has a short global cooldown after a failed attempt, so a hostile peer cannot retry pairing in a tight loop.
+- Discovery confirmation is keyed by fingerprint, address, and port, so a spoofed packet cannot reuse another host's confirmation. Discovery caches have hard size limits.
+- TLS is negotiated by Windows instead of forcing TLS 1.2, and the negotiated protocol and cipher are logged. Certificate pinning and the six-digit code remain mandatory.
+- Firewall validation now checks enabled state, inbound direction, allow action, Private/Public profiles, `LocalSubnet`, and the exact executable path. Repair also proves the receive folder is writable.
+- Sender and receiver both sanitize file names before comparing them, fixing long names and names containing Unicode format characters such as directional marks.
+
+### Fixed
+
+- Receiver cancel is now delivered before the session closes, so both sides report a cancel rather than a generic failure.
+- **Visible on this network** is wired to the server as well as discovery, so hidden mode rejects unpaired pairing requests.
+- Quitting or sleeping preserves an in-progress partial instead of deleting it. A failed final rename keeps the verified bytes as a resumable partial.
+- An unreadable receive folder no longer crashes startup or the repair report.
+- Resume points are computed before the free-space decision and reused for the whole transfer instead of being re-hashed for each file.
+- Discovery now persists updated peer endpoints, so paired devices found after a DHCP change keep working.
+- `DONE` and `DONE_ACK` transfer IDs are checked instead of being ignored.
+- Multi-file progress shows only the final completion as complete; earlier files no longer close the progress window with a false success.
+- Closing the device list during an await no longer touches disposed controls, and closing the progress window cancels an active transfer.
+- A second pairing request cannot inherit a closing dialog from the first.
+- Settings repair runs off the UI thread, and Save is blocked while repair is running.
+- Timeouts during pairing and receive prompts surface as timeouts instead of `denied`/`declined`.
+
+### Changed
+
+- Added **Maximum receive size (GB)** to Settings.
+- Added a firewall warning to the device-list status when the rule is missing.
+- Added **More → Check for updates**, which checks the latest GitHub release and opens the release page only when a newer version exists.
+- The release build uses .NET 10 SDK tooling, publishes the zip with its checksums, and checks `-Version` against the actual assembly version.
+- Added CodeQL analysis, Dependabot updates, warnings-as-errors in CI, and build provenance attestation.
+
 ## [0.1.7] - 2026-11-28
 
 ### Added

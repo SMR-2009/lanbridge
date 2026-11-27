@@ -9,6 +9,8 @@ namespace LanBridge.Core
     [DataContract]
     public sealed class AppConfig
     {
+        private static readonly object FileLock = new object();
+
         [DataMember] public string DeviceName { get; set; }
         [DataMember] public string ReceiveFolder { get; set; }
         [DataMember] public bool StartWithWindows { get; set; }
@@ -18,6 +20,7 @@ namespace LanBridge.Core
         [DataMember] public string DeviceId { get; set; }
         [DataMember] public int TcpPort { get; set; }
         [DataMember] public int UdpPort { get; set; }
+        [DataMember] public long MaxReceiveBytes { get; set; }
 
         public static AppConfig CreateDefault()
         {
@@ -32,7 +35,8 @@ namespace LanBridge.Core
                 FirewallRuleAdded = false,
                 DeviceId = Guid.NewGuid().ToString("N"),
                 TcpPort = 45873,
-                UdpPort = 45873
+                UdpPort = 45873,
+                MaxReceiveBytes = 100L * 1024 * 1024 * 1024
             };
         }
 
@@ -77,29 +81,33 @@ namespace LanBridge.Core
         public void Save(string path)
         {
             if (string.IsNullOrWhiteSpace(path)) throw new ArgumentNullException(nameof(path));
-            Normalize();
 
-            var directory = Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
-
-            var tmp = path + ".tmp";
-            try
+            lock (FileLock)
             {
-                using (var stream = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
+                Normalize();
+
+                var directory = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+
+                var tmp = path + ".tmp";
+                try
                 {
-                    var serializer = new DataContractJsonSerializer(typeof(AppConfig));
-                    serializer.WriteObject(stream, this);
-                    stream.Flush(true);
-                }
+                    using (var stream = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
+                    {
+                        var serializer = new DataContractJsonSerializer(typeof(AppConfig));
+                        serializer.WriteObject(stream, this);
+                        stream.Flush(true);
+                    }
 
-                if (File.Exists(path))
-                    File.Replace(tmp, path, null);
-                else
-                    File.Move(tmp, path);
-            }
-            finally
-            {
-                if (File.Exists(tmp)) try { File.Delete(tmp); } catch { }
+                    if (File.Exists(path))
+                        File.Replace(tmp, path, null);
+                    else
+                        File.Move(tmp, path);
+                }
+                finally
+                {
+                    if (File.Exists(tmp)) try { File.Delete(tmp); } catch { }
+                }
             }
         }
 
@@ -114,6 +122,7 @@ namespace LanBridge.Core
             }
             if (TcpPort <= 0 || TcpPort > 65535) TcpPort = 45873;
             if (UdpPort <= 0 || UdpPort > 65535) UdpPort = 45873;
+            if (MaxReceiveBytes <= 0) MaxReceiveBytes = 100L * 1024 * 1024 * 1024;
         }
     }
 }

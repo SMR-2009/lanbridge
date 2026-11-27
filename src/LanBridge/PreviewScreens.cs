@@ -132,6 +132,7 @@ namespace LanBridge
             }
 
             public bool Discoverable => true;
+            public bool FirewallRulePresent => true;
 
             public Task<PairingAttemptResult> PairAsync(DeviceRow row)
             {
@@ -162,6 +163,11 @@ namespace LanBridge
 
             public void ShowAbout()
             {
+            }
+
+            public Task CheckForUpdatesAsync()
+            {
+                return Task.CompletedTask;
             }
         }
     }

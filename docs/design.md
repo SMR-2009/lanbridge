@@ -12,7 +12,7 @@ LanBridge is a small Windows tray app for sending files between two Windows PCs 
 
 Pair the two laptops once with a six-digit code. After that, right-click the tray icon, choose a laptop, pick files, and send. Everything stays on the LAN. There is no account, cloud service, relay, browser tab, or background internet traffic.
 
-The first release targets two Windows 11 laptops on one home network. The code will be public and should be useful to other Windows 10/11 users with the same need.
+The first release targets two Windows 11 laptops on one home network. The code will be public and should be useful to other Windows 11 users with the same need.
 
 ## 2. Goals
 
@@ -207,7 +207,7 @@ No file contents, pairing codes, or private keys are logged.
 ### 7.3 Dependencies
 
 - Runtime: .NET Framework 4.8.1 (included in Windows 11 and current Windows 10).
-- Build: .NET SDK 8 (build machine only) with `Microsoft.NETFramework.ReferenceAssemblies.net48`.
+- Build: .NET SDK 10 (build machine only) with `Microsoft.NETFramework.ReferenceAssemblies.net48`.
 - Tests: xUnit + `Microsoft.NET.Test.Sdk`.
 - Runtime NuGet dependencies: none.
 - UI: WinForms; no third-party UI packages.
@@ -269,7 +269,7 @@ Why this shape: a PIN that is merely sent over the connection can be relayed by 
 
 In scope:
 
-- Passive eavesdropping on the home LAN: blocked by TLS 1.2 with ECDHE.
+- Passive eavesdropping on the home LAN: blocked by TLS with ECDHE.
 - Active man-in-the-middle during discovery or pairing: discovery confirmation binds the certificate; the pairing code binds the live channel.
 - Device impersonation / spoofed discovery: full-certificate pinning and TLS callback.
 - Random LAN device trying to send files: pairing required; offers only from pinned peers.
@@ -293,7 +293,7 @@ Out of scope:
 - Server requires a client certificate; client always presents its identity.
 - Certificate validation is fingerprint-based, not chain-based; self-signed certs are expected.
 - Revocation and hostname checks are intentionally skipped; the pinned certificate is the identity.
-- No TLS 1.3 dependency in v0.1, because .NET Framework 4.8/Schannel support varies by OS update. TLS 1.2 with ECDHE is the compatibility baseline.
+- TLS is negotiated by Windows rather than forced to one version. Pinning and the six-digit code do not depend on the negotiated version.
 
 ## 9. Discovery
 
@@ -545,7 +545,7 @@ A manual download-and-run path is documented for users who do not want to pipe a
 
 - Repo description: "Tiny, secure, local-only file transfer for Windows."
 - Topics: `windows`, `file-transfer`, `lan`, `winforms`, `dotnet`, `local-first`, `privacy`, `tray-app`, `self-hosted`.
-- README: badges (build, latest release, MIT, Windows 10/11), one-line pitch, screenshots, install command, quick-start pairing walkthrough, security model, limitations, FAQ, troubleshooting, build-from-source, credits, and a link to LocalSend for cross-platform users.
+- README: badges (build, latest release, MIT, Windows 11), one-line pitch, screenshots, install command, quick-start pairing walkthrough, security model, limitations, FAQ, troubleshooting, build-from-source, credits, and a link to LocalSend for cross-platform users.
 - Visuals: app icon, 1280x640 social preview, and screenshots of the device list, pairing code, transfer progress, and tray menu (generated after the UI exists).
 - Docs: `docs/design.md` (public copy of this spec), `docs/protocol.md`, `docs/security.md`.
 - Community files: `LICENSE`, `SECURITY.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `CODE_OF_CONDUCT.md`, issue forms, and a pull-request template.
@@ -554,7 +554,7 @@ A manual download-and-run path is documented for users who do not want to pipe a
 
 GitHub Actions:
 
-- `build.yml`: on push and pull request; `windows-latest`; setup .NET 8; restore, build, test.
+- `build.yml`: on push and pull request; `windows-2022`; setup .NET 10; restore, build, test.
 - `release.yml`: on tag `v*`; build/test; zip the exe, README, LICENSE; compute SHA-256; create a GitHub Release with `softprops/action-gh-release`.
 - Permissions: `contents: write` only for the release workflow.
 
@@ -645,7 +645,7 @@ Additional cases:
 - Peer identity: full certificate fingerprint is the pin; device ID is metadata only; an identity change requires manual re-pair.
 - Visibility: hidden stops discovery and rejects unpaired sessions; paired peers may try the last endpoint.
 - Network scope: physical Wi-Fi/Ethernet subnets only; VPN/virtual adapters excluded; re-enumerate on network change.
-- Transport: TLS 1.2, mutual auth, certificate pinning.
+- Transport: Windows-negotiated TLS, mutual auth, certificate pinning.
 - Ports: TCP + UDP `45873`.
 - Discovery: IPv4 broadcast + immediate query.
 - One inbound + one outbound transfer at a time; pairing and pings always allowed.
@@ -664,7 +664,7 @@ Additional cases:
 | VPN or Hyper-V virtual adapters confuse discovery | Enumerate active physical Wi-Fi/Ethernet interfaces with a private IPv4 and default gateway; ignore virtual/link-local; advertise the source address |
 | Unsigned exe triggers SmartScreen/AV | Build locally; publish SHA-256; document; code signing later |
 | WinForms looks dated or scales poorly | Native controls, Segoe UI, PerMonitorV2 manifest, test at 100/125/150% |
-| .NET Framework 4.8 missing on older Windows 10 | Document Windows 10 1903+ / Windows 11; app shows a clear error |
+| .NET Framework 4.8 missing | Document Windows 11; the app shows a clear error |
 | Pairing/TLS implementation bugs | Small protocol, unit + loopback integration tests, two-laptop manual test |
 | Scope creep (folders, resume, mobile) | Explicit non-goals; ship v0.1 first |
 | GitHub release automation/token | `gh` already authenticated as `SMR-2009`; workflows use `GITHUB_TOKEN` |

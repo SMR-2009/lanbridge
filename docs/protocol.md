@@ -1,17 +1,17 @@
 # LanBridge protocol v1
 
-This document describes the wire protocol implemented by LanBridge 0.1.7. It is intentionally small: one TCP port, one UDP port, JSON payloads, and TLS 1.2 with mutual certificates.
+This document describes the wire protocol implemented by LanBridge 0.1.8. It is intentionally small: one TCP port, one UDP port, JSON payloads, and Windows-negotiated TLS with mutual certificates.
 
 ## Transport
 
 | Purpose | Transport | Default port |
 | --- | --- | --- |
 | Discovery | UDP broadcast | `45873` |
-| Pairing, control, file data | TCP + TLS 1.2 | `45873` |
+| Pairing, control, file data | TCP + TLS (Windows-negotiated, 1.2 or newer when available) | `45873` |
 
 - The server presents a self-signed certificate created on first launch. Clients verify its full SHA-256 fingerprint against the value learned during discovery or stored from pairing.
 - The client also presents a certificate. The server requires one and checks that the fingerprint in `HELLO` matches the certificate it actually received. During first pairing any certificate is accepted; after pairing the fingerprint must be in the peer store.
-- TLS 1.2 is the only enabled protocol. Certificate chains are not used; LanBridge is a pinning system, not a public-key infrastructure.
+- TLS is negotiated by Windows. The negotiated protocol and cipher are logged. Certificate chains are not used; LanBridge is a pinning system, not a public-key infrastructure.
 - SNI is set to `lanbridge` but is not used for routing.
 - Each request opens a new TCP/TLS connection. There is no connection reuse and no multiplexing.
 
@@ -129,7 +129,7 @@ proof = HMAC-SHA256(proofKey, "confirm" || nonceInitiator || nonceResponder
 
 The code is checked on the initiator's side, and the proof is checked on the server's side. A man-in-the-middle has different certificate fingerprints and nonces toward each side, so the two screens show different codes and the proof fails. The code is not a password and is never sent in a frame.
 
-A server that receives `PAIR_ABORT` or an invalid proof closes the connection without writing a peer record. Three wrong local attempts, a timeout, or a user cancel also abort. Pairing attempts are not rate-limited across new TCP connections; the short SAS and the explicit approval step are the defense.
+A server that receives `PAIR_ABORT` or an invalid proof closes the connection without writing a peer record. Three wrong local attempts, a timeout, or a user cancel also abort. After a failed pairing the server applies a short global cooldown before accepting another pairing request, and the short SAS plus explicit approval remain the defense.
 
 ## Transfer
 
@@ -146,9 +146,9 @@ The initiator must have the server's fingerprint in its peer store, and the serv
 Resume is opt-in through the advertised offset. A receiver only offers a partial file when its sidecar name, declared size, and on-disk length are valid. The sender hashes its own prefix and compares it with `prefixSha256`; on a mismatch it sends `CANCEL` and the receiver deletes the partial file. The final SHA-256 always covers the complete file, including the prefix.
 4. After all files: `DONE { transferId }` → `DONE_ACK { transferId }`.
 
-The receiver creates a new file for each entry, writes to a `.part` file, hashes the bytes as they arrive, compares the SHA-256 from `FILE_END`, then renames the `.part` file into place. Existing files are never overwritten: the receiver picks `name (1).ext`, `name (2).ext`, and so on.
+The receiver creates a new file for each entry, writes to a `.part` file in a private `parts` subfolder, hashes the bytes as they arrive, compares the SHA-256 from `FILE_END`, then renames the `.part` file into place. Existing files are never overwritten: the receiver picks `name (1).ext`, `name (2).ext`, and so on.
 
-Only one inbound transfer and one outbound transfer may run at a time per app. Sending and receiving at the same time is allowed. A `CANCEL` aborts the current transfer; completed files are kept. A user cancel deletes the partial `.part` file; an interrupted network connection keeps it with a `.part.resume` sidecar for a later retry. If an individual file fails, the whole transfer is aborted with `ERROR { code: "transfer_failed", completed }`; the sender's result reports how many files completed.
+Only one inbound transfer and one outbound transfer may run at a time per app. Sending and receiving at the same time is allowed. A `CANCEL` aborts the current transfer; completed files are kept. A user cancel deletes the partial `.part` file; an interrupted network connection keeps it in the private `parts` folder with a `.part.resume` sidecar for a later retry. If an individual file fails, the whole transfer is aborted with `ERROR { code: "transfer_failed", completed }`; the sender's result reports how many files completed.
 
 `REJECT` reasons include `declined`, `timeout`, and `disk_full`. `ERROR` codes include `not_paired`, `not_lan`, `busy_inbound`, `invalid_offer`, `offer_required`, `file_begin_required`, `transfer_failed`, and `timeout`.
 
@@ -164,7 +164,7 @@ Discovery uses UDP port `45873`, IPv4 only. A packet is `LNB1` followed by UTF-8
 ```
 
 - `a` is an announcement; `q` is a query.
-- Announcements are sent every five seconds and on network change/resume. Queries are sent when the device list opens or is refreshed.
+- Announcements are sent every five seconds. A query is sent when the device list opens, is refreshed, or the network changes or resumes.
 - A received announcement is **not trusted on its own**. Before a device appears in the list, LanBridge opens a TCP/TLS connection and sends `PING`. That proves the sender controls the private key for the certificate whose fingerprint it advertised.
 - Announces are ignored when they match this device's ID or fingerprint, come from an address outside the local subnets, or arrive faster than four per second from one address.
 - A hidden device neither announces nor queries. Paired peers can still reach a hidden device by its last known endpoint because the TCP listener remains available.

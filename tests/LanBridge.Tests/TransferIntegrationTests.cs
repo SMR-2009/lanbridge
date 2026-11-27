@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Text;
 using System.Threading;
@@ -26,7 +27,54 @@ namespace LanBridge.Tests
             Assert.Equal(2, result.FilesCompleted);
             Assert.Equal("alpha", File.ReadAllText(harness.ReceivePath("a.txt")));
             Assert.Equal(new byte[] { 1, 2, 3, 4 }, File.ReadAllBytes(harness.ReceivePath("b.bin")));
-            Assert.Empty(Directory.GetFiles(harness.Profile.ReceiveDir, "*.part"));
+            Assert.Empty(Parts(harness.Profile));
+        }
+
+        [Fact]
+        public async Task Send_TwoFiles_OverallCompleteOnlyAfterTheLastFile()
+        {
+            using var harness = new TransferHarness();
+            Assert.True((await harness.PairAsync()).Success);
+            var first = harness.SourceFile("a.txt", Encoding.UTF8.GetBytes("alpha"));
+            var second = harness.SourceFile("b.txt", Encoding.UTF8.GetBytes("beta"));
+
+            var result = await harness.Client.SendAsync(harness.Peer, new[] { first, second }, default);
+
+            Assert.True(result.Success, result.ErrorCode);
+            var events = harness.Prompter.SendProgressEvents;
+            Assert.Single(events, progress => progress.OverallComplete);
+            Assert.Equal(1, events.Last(progress => progress.OverallComplete).FileIndex);
+            Assert.Contains(events, progress => progress.IsComplete && !progress.OverallComplete);
+        }
+
+        [Fact]
+        public async Task Send_OfferAboveMaxReceiveBytes_IsRejected()
+        {
+            var options = new TransferOptions { MaxReceiveBytes = 4 };
+            using var harness = new TransferHarness(options: options);
+            Assert.True((await harness.PairAsync()).Success);
+            var source = harness.SourceFile("too-large.bin", new byte[5]);
+
+            var result = await harness.Client.SendAsync(harness.Peer, new[] { source }, default);
+
+            Assert.False(result.Success);
+            Assert.Equal("invalid_offer", result.ErrorCode);
+            Assert.Empty(Directory.GetFiles(harness.Profile.ReceiveDir));
+        }
+
+        [Fact]
+        public async Task Send_UnicodeFormatName_IsSanitizedOnBothSides()
+        {
+            using var harness = new TransferHarness();
+            Assert.True((await harness.PairAsync()).Success);
+
+            var unicodeName = "report\u200e.txt";
+            var source = harness.SourceFile(unicodeName, Encoding.UTF8.GetBytes("unicode"));
+
+            var result = await harness.Client.SendAsync(harness.Peer, new[] { source }, default);
+
+            Assert.True(result.Success, result.ErrorCode + " | " + string.Join(" | ", harness.Log.Lines));
+            Assert.True(File.Exists(harness.ReceivePath(PathGuard.SanitizeFileName(unicodeName))));
         }
 
         [Fact]
@@ -130,10 +178,10 @@ namespace LanBridge.Tests
             Assert.Equal("cancelled", result.ErrorCode);
             await WaitUntilAsync(() => !harness.Server.IsReceiving, 3000);
             await WaitUntilAsync(
-                () => Directory.GetFiles(harness.Profile.ReceiveDir, "*.part").Length == 0,
+                () => Parts(harness.Profile).Length == 0,
                 3000);
             Assert.True(
-                Directory.GetFiles(harness.Profile.ReceiveDir, "*.part").Length == 0,
+                Parts(harness.Profile).Length == 0,
                 string.Join(" | ", harness.Log.Lines));
         }
 
@@ -156,7 +204,7 @@ namespace LanBridge.Tests
             Assert.Equal(1, result.FilesCompleted);
             Assert.True(File.Exists(harness.ReceivePath("a.bin")));
             Assert.False(File.Exists(harness.ReceivePath("b.bin")));
-            Assert.Empty(Directory.GetFiles(harness.Profile.ReceiveDir, "*.part"));
+            Assert.Empty(Parts(harness.Profile));
         }
 
         [Fact]
@@ -177,8 +225,8 @@ namespace LanBridge.Tests
 
             Assert.True(result.Success, result.ErrorCode + " | " + string.Join(" | ", harness.Log.Lines));
             Assert.Equal(content, File.ReadAllBytes(harness.ReceivePath("resume.bin")));
-            var remainingParts = Directory.GetFiles(harness.Profile.ReceiveDir, "*.part");
-            var remainingMetadata = Directory.GetFiles(harness.Profile.ReceiveDir, "*.resume");
+            var remainingParts = Parts(harness.Profile);
+            var remainingMetadata = ResumeFiles(harness.Profile);
             Assert.True(
                 remainingParts.Length == 0 && remainingMetadata.Length == 0,
                 "parts=" + string.Join(",", remainingParts) + " metadata=" + string.Join(",", remainingMetadata)
@@ -209,11 +257,11 @@ namespace LanBridge.Tests
             Assert.False(result.Success);
             Assert.Equal("resume_mismatch", result.ErrorCode);
             await WaitUntilAsync(
-                () => Directory.GetFiles(harness.Profile.ReceiveDir, "*.part").Length == 0 &&
-                      Directory.GetFiles(harness.Profile.ReceiveDir, "*.resume").Length == 0,
+                () => Parts(harness.Profile).Length == 0 &&
+                      ResumeFiles(harness.Profile).Length == 0,
                 3000);
-            var remainingParts = Directory.GetFiles(harness.Profile.ReceiveDir, "*.part");
-            var remainingMetadata = Directory.GetFiles(harness.Profile.ReceiveDir, "*.resume");
+            var remainingParts = Parts(harness.Profile);
+            var remainingMetadata = ResumeFiles(harness.Profile);
             Assert.True(
                 remainingParts.Length == 0 && remainingMetadata.Length == 0,
                 "parts=" + string.Join(",", remainingParts) + " metadata=" + string.Join(",", remainingMetadata)
@@ -243,6 +291,22 @@ namespace LanBridge.Tests
             Assert.True(firstResult.Success, firstResult.ErrorCode);
         }
 
+        private static string[] Parts(TempProfile profile)
+        {
+            var folder = Path.Combine(profile.ReceiveDir, FileReceiver.PartFolderName);
+            return Directory.Exists(folder)
+                ? Directory.GetFiles(folder, "*.part")
+                : Array.Empty<string>();
+        }
+
+        private static string[] ResumeFiles(TempProfile profile)
+        {
+            var folder = Path.Combine(profile.ReceiveDir, FileReceiver.PartFolderName);
+            return Directory.Exists(folder)
+                ? Directory.GetFiles(folder, "*.resume")
+                : Array.Empty<string>();
+        }
+
         private static async Task WaitUntilAsync(Func<bool> condition, int timeoutMs)
         {
             var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
@@ -270,6 +334,7 @@ namespace LanBridge.Tests
                 TransferOptions options = null)
             {
                 options = options ?? new TransferOptions();
+                options.PairingCooldown = TimeSpan.Zero;
                 Profile = new TempProfile();
                 ServerIdentity = TestData.Identity(Profile, "server");
                 ClientIdentity = TestData.Identity(Profile, "client");

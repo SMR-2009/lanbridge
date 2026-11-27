@@ -38,6 +38,11 @@ namespace LanBridge.Core
                     var certificate = LoadCertificate(pfx, log);
                     return new DeviceIdentity(deviceId, certificate);
                 }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+                {
+                    log.Error("Identity could not be read; keeping the existing file instead of replacing it", ex);
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     var quarantine = Path.Combine(

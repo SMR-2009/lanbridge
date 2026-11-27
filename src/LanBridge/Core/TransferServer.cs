@@ -28,21 +28,37 @@ namespace LanBridge.Core
         private readonly Func<string, string, long, FileReceiver> _receiverFactory;
         private const int DefaultMaxConcurrentClients = 12;
         private readonly ConcurrentDictionary<TcpClient, byte> _clients = new ConcurrentDictionary<TcpClient, byte>();
+        private readonly ConcurrentDictionary<IPAddress, int> _clientsPerIp = new ConcurrentDictionary<IPAddress, int>();
         private readonly SemaphoreSlim _clientSlots;
+        private const int MaxClientsPerIp = 4;
+        private long _pairingCooldownUntilTicks;
         private int _rejectedClientCount;
 
         private readonly SemaphoreSlim _pairingLock = new SemaphoreSlim(1, 1);
         private TcpClient _activeClient;
+        private SslStream _activeStream;
         private int _cancelRequested;
+        private int _stopping;
         private TcpListener _listener;
         private CancellationTokenSource _cancellation;
         private Task _acceptLoop;
         private int _receiving;
         private bool _disposed;
 
-        public bool Discoverable { get; set; } = true;
-        public bool AutoAcceptFromPaired { get; set; }
+        private volatile bool _discoverable = true;
+        public bool Discoverable
+        {
+            get => _discoverable;
+            set => _discoverable = value;
+        }
+
+        public volatile bool AutoAcceptFromPaired;
         public bool IsReceiving => Volatile.Read(ref _receiving) != 0;
+        public long MaxReceiveBytes
+        {
+            get => _options.MaxReceiveBytes;
+            set => _options.MaxReceiveBytes = value > 0 ? value : _options.MaxReceiveBytes;
+        }
         public int RejectedClientCount => Volatile.Read(ref _rejectedClientCount);
         public int ActiveClientCount => _clients.Count;
         public event Action<PeerRecord> DevicePaired;
@@ -85,6 +101,7 @@ namespace LanBridge.Core
 
             _listener = new TcpListener(IPAddress.Any, _port);
             _listener.Start();
+            Interlocked.Exchange(ref _stopping, 0);
             _cancellation = new CancellationTokenSource();
             _acceptLoop = Task.Run(() => AcceptLoopAsync(_cancellation.Token));
             _log.Info("Transfer server listening on port " + _port);
@@ -149,12 +166,32 @@ namespace LanBridge.Core
                 client.NoDelay = true;
                 var remote = ((IPEndPoint)client.Client.RemoteEndPoint).Address;
 
+                var perIp = _clientsPerIp.AddOrUpdate(remote, 1, (key, current) => current + 1);
+                if (perIp > MaxClientsPerIp)
+                {
+                    _clientsPerIp.AddOrUpdate(remote, 0, (key, current) => Math.Max(0, current - 1));
+                    _log.Warn("Rejected inbound connection: per-IP limit reached for " + remote);
+                    try { client.Close(); } catch { }
+                    return;
+                }
+
+                if (!IsRemoteAllowed(remote))
+                {
+                    _log.Warn("Rejected non-LAN connection from " + remote);
+                    try { client.Close(); } catch { }
+                    return;
+                }
+
                 using (var ssl = Tls.CreateServer(client.GetStream(), _identity.Certificate))
                 {
                     await TimeoutIo.WithTimeout(
-                        ssl.AuthenticateAsServerAsync(_identity.Certificate, true, SslProtocols.Tls12, false),
+                        ssl.AuthenticateAsServerAsync(_identity.Certificate, true, SslProtocols.None, false),
                         _options.ControlTimeout,
                         cancellationToken).ConfigureAwait(false);
+
+                    _log.Info("TLS negotiated (server): " + ssl.SslProtocol
+                        + "; cipher=" + ssl.CipherAlgorithm + "-" + ssl.CipherStrength
+                        + "; hash=" + ssl.HashAlgorithm);
 
                     var remoteCertificate = ssl.RemoteCertificate;
                     if (remoteCertificate == null)
@@ -196,12 +233,6 @@ namespace LanBridge.Core
                     if (!string.Equals(hello.Fp, clientFingerprint, StringComparison.OrdinalIgnoreCase))
                     {
                         await SendErrorAsync(ssl, "identity_mismatch", cancellationToken).ConfigureAwait(false);
-                        return;
-                    }
-
-                    if (!IsRemoteAllowed(remote))
-                    {
-                        await SendErrorAsync(ssl, "not_lan", cancellationToken).ConfigureAwait(false);
                         return;
                     }
 
@@ -251,16 +282,7 @@ namespace LanBridge.Core
 
                     if (hello.Intent == "send")
                     {
-                        Volatile.Write(ref _activeClient, client);
-                        Interlocked.Exchange(ref _cancelRequested, 0);
-                        try
-                        {
-                            await HandleSendAsync(ssl, hello, ack, clientFingerprint, remote, cancellationToken).ConfigureAwait(false);
-                        }
-                        finally
-                        {
-                            Interlocked.CompareExchange(ref _activeClient, null, client);
-                        }
+                        await HandleSendAsync(ssl, client, hello, ack, clientFingerprint, remote, cancellationToken).ConfigureAwait(false);
                         return;
                     }
 
@@ -277,6 +299,10 @@ namespace LanBridge.Core
             finally
             {
                 _clients.TryRemove(client, out _);
+                IPAddress remote = null;
+                try { remote = ((IPEndPoint)client.Client.RemoteEndPoint).Address; } catch { }
+                if (remote != null)
+                    _clientsPerIp.AddOrUpdate(remote, 0, (key, current) => Math.Max(0, current - 1));
                 try { client.Close(); } catch { }
             }
         }
@@ -284,8 +310,23 @@ namespace LanBridge.Core
         public void CancelActiveTransfer()
         {
             Interlocked.Exchange(ref _cancelRequested, 1);
-            var client = Volatile.Read(ref _activeClient);
-            try { client?.Close(); } catch { }
+            var stream = Volatile.Read(ref _activeStream);
+            if (stream != null)
+            {
+                try
+                {
+                    TimeoutIo.WriteFrameAsync(
+                        stream,
+                        FrameType.Cancel,
+                        ProtocolJson.Serialize(new CancelDto { Reason = "cancelled" }),
+                        _options.ControlTimeout,
+                        CancellationToken.None).Wait(TimeSpan.FromMilliseconds(500));
+                }
+                catch
+                {
+                }
+            }
+
         }
 
         private async Task HandlePairAsync(
@@ -296,6 +337,12 @@ namespace LanBridge.Core
             byte[] serverNonce,
             CancellationToken cancellationToken)
         {
+            if (DateTime.UtcNow.Ticks < Interlocked.Read(ref _pairingCooldownUntilTicks))
+            {
+                await SendPairDenyAsync(ssl, "busy", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
             if (!Discoverable && !_peers.ContainsFingerprint(clientFingerprint))
             {
                 await SendPairDenyAsync(ssl, "hidden", cancellationToken).ConfigureAwait(false);
@@ -308,6 +355,7 @@ namespace LanBridge.Core
                 return;
             }
 
+            var paired = false;
             try
             {
                 var peer = new PeerEndpoint(
@@ -385,7 +433,12 @@ namespace LanBridge.Core
                     }
                 }
 
-                if (proofFrame.Type == FrameType.PairAbort || proofFrame.Type != FrameType.PairProof)
+                if (proofFrame.Type == FrameType.PairAbort)
+                {
+                    return;
+                }
+
+                if (proofFrame.Type != FrameType.PairProof)
                 {
                     await SendPairDenyAsync(ssl, "invalid", cancellationToken).ConfigureAwait(false);
                     return;
@@ -437,6 +490,7 @@ namespace LanBridge.Core
                 };
                 _peers.Upsert(record);
                 _peers.Save();
+                paired = true;
                 DevicePaired?.Invoke(record);
 
                 await TimeoutIo.WriteFrameAsync(
@@ -448,11 +502,18 @@ namespace LanBridge.Core
             }
             finally
             {
-                // Release the pairing gate before closing the UI dialog.
-                // The close notification is observable by callers (and tests),
-                // and a second pairing attempt must not race the release.
-                _pairingLock.Release();
+                if (!paired && _options.PairingCooldown > TimeSpan.Zero)
+                {
+                    Interlocked.Exchange(
+                        ref _pairingCooldownUntilTicks,
+                        DateTime.UtcNow.Add(_options.PairingCooldown).Ticks);
+                }
+
+                // Close the current dialog before allowing the next pairing to
+                // install its own form. Releasing first let a new task inherit a
+                // form that was already closing.
                 _prompter.ClosePairingCode();
+                _pairingLock.Release();
             }
         }
 
@@ -467,6 +528,7 @@ namespace LanBridge.Core
 
         private async Task HandleSendAsync(
             SslStream ssl,
+            TcpClient client,
             HelloDto hello,
             HelloAckDto ack,
             string clientFingerprint,
@@ -485,6 +547,9 @@ namespace LanBridge.Core
                 return;
             }
 
+            Volatile.Write(ref _activeClient, client);
+            Volatile.Write(ref _activeStream, ssl);
+            Interlocked.Exchange(ref _cancelRequested, 0);
             var completed = 0;
             IProgress<TransferProgress> progress = null;
             var transferCompleted = false;
@@ -520,7 +585,7 @@ namespace LanBridge.Core
                     return;
                 }
 
-                var validation = ValidateOffer(offerDto, out var files, out var total);
+                var validation = ValidateOffer(offerDto, _options.MaxReceiveBytes, out var files, out var total);
                 if (validation != null)
                 {
                     await SendErrorAsync(ssl, validation, cancellationToken).ConfigureAwait(false);
@@ -532,7 +597,18 @@ namespace LanBridge.Core
 
                 var folder = _receiveFolder();
                 Directory.CreateDirectory(folder);
-                if (!HasFreeSpace(folder, total))
+
+                var resumePoints = new List<ResumePoint>(files.Count);
+                long alreadyPresent = 0;
+                for (var resumeIndex = 0; resumeIndex < files.Count; resumeIndex++)
+                {
+                    var point = FileReceiver.FindResume(folder, files[resumeIndex].Name, files[resumeIndex].Size);
+                    resumePoints.Add(point);
+                    if (point != null) alreadyPresent += point.Offset;
+                }
+
+                var requiredBytes = alreadyPresent >= total ? 0 : total - alreadyPresent;
+                if (!HasFreeSpace(folder, requiredBytes))
                 {
                     await WriteJsonAsync(ssl, FrameType.Reject, new RejectDto { Reason = "disk_full" }, cancellationToken).ConfigureAwait(false);
                     return;
@@ -570,12 +646,6 @@ namespace LanBridge.Core
                     return;
                 }
 
-                var resumePoints = new List<ResumePoint>(files.Count);
-                for (var resumeIndex = 0; resumeIndex < files.Count; resumeIndex++)
-                {
-                    resumePoints.Add(FileReceiver.FindResume(folder, files[resumeIndex].Name, files[resumeIndex].Size));
-                }
-
                 var accept = new AcceptDto
                 {
                     TransferId = offer.TransferId,
@@ -601,7 +671,11 @@ namespace LanBridge.Core
                 for (var index = 0; index < files.Count; index++)
                 {
                     var beginFrame = await TimeoutIo.ReadFrameAsync(ssl, _options.FileIdleTimeout, cancellationToken).ConfigureAwait(false);
-                    if (beginFrame.Type == FrameType.Cancel) return;
+                    if (beginFrame.Type == FrameType.Cancel)
+                    {
+                        RemoveResumePointsFrom(resumePoints, index);
+                        return;
+                    }
                     if (beginFrame.Type != FrameType.FileBegin)
                     {
                         await SendErrorAsync(ssl, "file_begin_required", cancellationToken).ConfigureAwait(false);
@@ -667,6 +741,12 @@ namespace LanBridge.Core
                         long received = 0;
                         while (true)
                         {
+                            if (Volatile.Read(ref _cancelRequested) != 0)
+                            {
+                                _log.Info("Receiver cancelled the transfer.");
+                                return;
+                            }
+
                             var dataFrame = await TimeoutIo.ReadFileDataAsync(
                                 ssl,
                                 fileBuffer,
@@ -677,6 +757,7 @@ namespace LanBridge.Core
                             {
                                 _log.Info("Sender cancelled the current file; removing its partial file.");
                                 receiver.Abort();
+                                RemoveResumePointsFrom(resumePoints, index + 1);
                                 _log.Info("Partial cleanup after cancel: part=" + File.Exists(receiver.PartPath)
                                     + ", metadata=" + File.Exists(receiver.PartPath + ".resume"));
                                 return;
@@ -728,7 +809,7 @@ namespace LanBridge.Core
                             IsComplete = true
                         });
                     }
-                    catch (Exception ex) when (!(ex is OperationCanceledException))
+                    catch (Exception ex) when (!(ex is OperationCanceledException) || Volatile.Read(ref _stopping) != 0)
                     {
                         if (Volatile.Read(ref _cancelRequested) != 0)
                             receiver.Abort();
@@ -753,8 +834,38 @@ namespace LanBridge.Core
                     return;
                 }
 
+                DoneDto done;
+                try
+                {
+                    done = ProtocolJson.Deserialize<DoneDto>(doneFrame.Payload);
+                }
+                catch (ProtocolException)
+                {
+                    await SendErrorAsync(ssl, "done_failed", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                if (!string.Equals(done.TransferId, offer.TransferId, StringComparison.Ordinal))
+                {
+                    await SendErrorAsync(ssl, "done_failed", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
                 await WriteJsonAsync(ssl, FrameType.DoneAck, new DoneAckDto { TransferId = offer.TransferId }, cancellationToken).ConfigureAwait(false);
                 transferCompleted = true;
+                if (progress != null)
+                {
+                    progress.Report(new TransferProgress
+                    {
+                        FileName = files[files.Count - 1].Name,
+                        FileIndex = files.Count - 1,
+                        FileCount = files.Count,
+                        BytesTransferred = offer.TotalSize,
+                        TotalBytes = offer.TotalSize,
+                        IsComplete = true,
+                        OverallComplete = true
+                    });
+                }
                 _log.Info("Incoming transfer completed from " + Sanitizer.SanitizeLogValue(hello.Name) + ".");
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -763,7 +874,9 @@ namespace LanBridge.Core
             }
             catch (Exception ex)
             {
-                failureCode = "transfer_failed";
+                failureCode = Volatile.Read(ref _cancelRequested) != 0
+                    ? "cancelled"
+                    : "transfer_failed";
                 _log.Warn("Send failed: " + ex.GetType().Name + ": " + Sanitizer.SanitizeLogValue(ex.Message));
             }
             finally
@@ -784,7 +897,16 @@ namespace LanBridge.Core
                 }
 
                 Interlocked.Exchange(ref _receiving, 0);
+                Interlocked.CompareExchange(ref _activeClient, null, client);
+                Interlocked.CompareExchange(ref _activeStream, null, ssl);
             }
+        }
+
+        private static void RemoveResumePointsFrom(List<ResumePoint> points, int startIndex)
+        {
+            if (points == null) return;
+            for (var index = Math.Max(0, startIndex); index < points.Count; index++)
+                FileReceiver.DeleteResumePoint(points[index]);
         }
 
         private async Task SendFileErrorAsync(SslStream ssl, int index, string code, CancellationToken cancellationToken)
@@ -796,17 +918,20 @@ namespace LanBridge.Core
                 cancellationToken).ConfigureAwait(false);
         }
 
-        private static string ValidateOffer(OfferDto offer, out List<TransferFile> files, out long total)
+        private static string ValidateOffer(OfferDto offer, long maxReceiveBytes, out List<TransferFile> files, out long total)
         {
             files = new List<TransferFile>();
             total = 0;
 
             if (offer?.Files == null || offer.Files.Count == 0 || offer.Files.Count > 5000)
                 return "invalid_offer";
+            if (maxReceiveBytes <= 0) return "invalid_offer";
 
             foreach (var file in offer.Files)
             {
                 if (file == null || file.Size < 0) return "invalid_offer";
+                if (file.Size > maxReceiveBytes || total > maxReceiveBytes - file.Size)
+                    return "invalid_offer";
                 if (total > long.MaxValue - file.Size) return "invalid_offer";
                 total += file.Size;
                 files.Add(new TransferFile(PathGuard.SanitizeFileName(file.Name), file.Size));
@@ -822,9 +947,9 @@ namespace LanBridge.Core
             try
             {
                 var root = Path.GetPathRoot(Path.GetFullPath(folder));
-                if (string.IsNullOrEmpty(root)) return true;
+                if (string.IsNullOrEmpty(root)) return false;
                 var drive = new DriveInfo(root);
-                const long reserve = 50L * 1024 * 1024;
+                const long reserve = 1024L * 1024 * 1024;
 
                 // Compare before adding the reserve. The old expression could
                 // overflow for a hostile declared total and bypass the check.
@@ -833,7 +958,7 @@ namespace LanBridge.Core
             }
             catch
             {
-                return true;
+                return false;
             }
         }
 
@@ -882,6 +1007,7 @@ namespace LanBridge.Core
         {
             if (_listener == null && _cancellation == null) return;
 
+            Interlocked.Exchange(ref _stopping, 1);
             try { _cancellation?.Cancel(); } catch { }
             try { _listener?.Stop(); } catch { }
 

@@ -1,6 +1,6 @@
 # Security model
 
-LanBridge is a two-laptop file transfer tool for one home network. It does not try to replace a hardened enterprise file transfer system. This document states what it protects, what it does not, and where the boundaries are. It describes the 0.1.7 release line.
+LanBridge is a two-laptop file transfer tool for one home network. It does not try to replace a hardened enterprise file transfer system. This document states what it protects, what it does not, and where the boundaries are. It describes the 0.1.8 release line.
 
 ## Assets
 
@@ -52,7 +52,7 @@ This is a guard against accidental exposure, not a firewall against a hostile lo
 
 ### Firewall
 
-The installer adds a Windows Defender Firewall rule scoped to the installed executable, applies to Private and Public profiles, and limits remote addresses to `LocalSubnet`. This is the one expected UAC prompt; if the rule already exists, the installer skips it. First-run setup checks for the rule and does not ask again. Declining UAC leaves the app working for outbound sends but blocks inbound connections until the rule is repaired from Settings. The rule is tied to the executable path, so running a different copy of `LanBridge.exe` is a different program to Windows Firewall.
+The installer adds a Windows Defender Firewall rule scoped to the installed executable, applies to Private and Public profiles, limits remote addresses to `LocalSubnet`, and verifies the enabled, inbound, allow, and executable fields before treating the rule as healthy. This is the one expected UAC prompt; if the rule already exists, the installer skips it. First-run setup checks for the rule and does not ask again. Declining UAC leaves the app working for outbound sends but blocks inbound connections until the rule is repaired from Settings. The rule is tied to the executable path, so running a different copy of `LanBridge.exe` is a different program to Windows Firewall.
 
 Windows often classifies a home Wi-Fi network as Public. The rule deliberately works on Public as well, because otherwise inbound transfers would fail on a correctly configured home network. If you do not trust the network, turn on **Visible on this network** off and disconnect.
 
@@ -65,7 +65,7 @@ Remote names are treated as hostile:
 - Windows reserved names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`) are prefixed with `_`.
 - Trailing dots and spaces are removed.
 - Empty or overlong names fall back to `file` and are length-limited.
-- Files are written to a `.part` file, hashed, verified against `FILE_END`, then moved into place. Existing files are never overwritten; a numeric suffix is used.
+- Files are written to a `.part` file inside a private `parts` subfolder, hashed, verified against `FILE_END`, then moved into place. Existing files are never overwritten; a numeric suffix is used.
 - A user cancel deletes the partial file. A network interruption keeps it with a `.part.resume` sidecar; a retry is accepted only when the peer's declared name, size, offset, and prefix SHA-256 still match.
 - The receive folder is checked for free space before the offer is accepted, with overflow-safe arithmetic.
 
@@ -79,9 +79,10 @@ LanBridge does not contact a server, check for updates, or send telemetry. The o
 
 ## Known limitations
 
-- Windows 11 only in 0.1.7. Windows 10 reached Microsoft end of support on 2025-10-14 and is not a supported target.
+- Windows 11 only in 0.1.8. Windows 10 reached Microsoft end of support on 2025-10-14 and is not a supported target.
 - IPv4 only.
-- One inbound and one outbound transfer at a time. Interrupted files can resume, but there is no delta sync and folders are not sent as a single unit.
+- Receive offers are capped by the configured maximum receive size. The free-space check reserves at least 1 GB and fails closed if the disk cannot be inspected.
+- One inbound and one outbound transfer at a time. Interrupted files can resume, but there is no delta sync, queue, compression, or folder-as-a-unit transfer. A single inbound offer is capped by the configured maximum receive size.
 - The executable is not code-signed. SmartScreen may warn on first launch. Check the SHA-256 against the release checksums if you downloaded it from somewhere other than the official release.
 - A paired device can send you files without approval if **Automatically accept files from paired devices** is enabled. It is off by default.
 - Manual endpoint entry (IPv4 plus port) is intended for networks where discovery is blocked. It still requires the six-digit pairing code; the address alone is not trusted.

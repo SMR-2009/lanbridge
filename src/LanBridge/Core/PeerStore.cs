@@ -62,6 +62,11 @@ namespace LanBridge.Core
                     }
                 }
             }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                log.Error("Peer store could not be read; keeping the existing file instead of discarding pins", ex);
+                throw;
+            }
             catch (Exception ex)
             {
                 var directory = Path.GetDirectoryName(path) ?? ".";

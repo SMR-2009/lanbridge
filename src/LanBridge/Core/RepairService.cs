@@ -43,12 +43,23 @@ namespace LanBridge.Core
             try
             {
                 Directory.CreateDirectory(config.ReceiveFolder);
-                report.Steps.Add("Receive folder is ready.");
+                var probe = Path.Combine(
+                    config.ReceiveFolder,
+                    ".lanbridge-write-" + Guid.NewGuid().ToString("N") + ".tmp");
+                try
+                {
+                    using (new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
+                }
+                finally
+                {
+                    try { if (File.Exists(probe)) File.Delete(probe); } catch { }
+                }
+                report.Steps.Add("Receive folder is ready and writable.");
             }
             catch (Exception ex)
             {
                 report.Warnings.Add("Receive folder: " + Sanitizer.SanitizeLogValue(ex.Message));
-                log.Warn("Repair could not create the receive folder: " + Sanitizer.SanitizeLogValue(ex.Message));
+                log.Warn("Repair could not create or write the receive folder: " + Sanitizer.SanitizeLogValue(ex.Message));
             }
 
             try

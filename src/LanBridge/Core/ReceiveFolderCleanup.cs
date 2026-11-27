@@ -25,12 +25,15 @@ namespace LanBridge.Core
                 return 0;
             }
 
-            if (!Directory.Exists(path)) return 0;
+            var partFolder = Path.Combine(path, FileReceiver.PartFolderName);
+            if (!Directory.Exists(partFolder)) return 0;
 
             var cutoff = utcNow - olderThan;
             var removed = 0;
 
-            foreach (var candidate in Directory.EnumerateFiles(path, "*.part", SearchOption.TopDirectoryOnly))
+            try
+            {
+                foreach (var candidate in Directory.EnumerateFiles(partFolder, "*.part", SearchOption.TopDirectoryOnly))
             {
                 try
                 {
@@ -43,27 +46,43 @@ namespace LanBridge.Core
                 }
                 catch (Exception ex)
                 {
-                    log.Warn("Could not remove a stale partial transfer: " + Sanitizer.SanitizeLogValue(ex.Message));
+                        log.Warn("Could not remove a stale partial transfer: " + Sanitizer.SanitizeLogValue(ex.Message));
+                    }
                 }
             }
-
-            // A resume sidecar is meaningless without its part file. Remove
-            // orphaned or expired sidecars so they cannot accumulate forever.
-            foreach (var metadata in Directory.EnumerateFiles(path, "*.part.resume", SearchOption.TopDirectoryOnly))
+            catch (Exception ex)
             {
-                try
-                {
-                    var info = new FileInfo(metadata);
-                    var partPath = metadata.Substring(0, metadata.Length - ".resume".Length);
-                    if (info.LastWriteTimeUtc >= cutoff && File.Exists(partPath)) continue;
+                log.Warn("Could not enumerate the private parts folder: " + Sanitizer.SanitizeLogValue(ex.Message));
+                return removed;
+            }
 
-                    info.Delete();
-                    log.Info("Removed stale resume metadata " + Sanitizer.SanitizeLogValue(info.Name));
-                }
-                catch (Exception ex)
+            // A resume sidecar is meaningful only beside its own .part file in
+            // the private parts folder. Never infer a path from user-visible names.
+            try
+            {
+                foreach (var metadata in Directory.EnumerateFiles(
+                    partFolder,
+                    "*.part.resume",
+                    SearchOption.TopDirectoryOnly))
                 {
-                    log.Warn("Could not remove stale resume metadata: " + Sanitizer.SanitizeLogValue(ex.Message));
+                    try
+                    {
+                        var info = new FileInfo(metadata);
+                        var partPath = metadata.Substring(0, metadata.Length - ".resume".Length);
+                        if (info.LastWriteTimeUtc >= cutoff && File.Exists(partPath)) continue;
+
+                        info.Delete();
+                        log.Info("Removed stale resume metadata " + Sanitizer.SanitizeLogValue(info.Name));
+                    }
+                    catch (Exception ex)
+                    {
+                        log.Warn("Could not remove stale resume metadata: " + Sanitizer.SanitizeLogValue(ex.Message));
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                log.Warn("Could not enumerate the private resume folder: " + Sanitizer.SanitizeLogValue(ex.Message));
             }
 
             return removed;

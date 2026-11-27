@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Runtime.Serialization.Json;
 
@@ -7,10 +8,13 @@ namespace LanBridge.Core
     public static class ProtocolJson
     {
         public const int MaxPayloadBytes = 1024 * 1024;
+        private const int MaxObjectGraphItems = 8192;
+        private static readonly ConcurrentDictionary<Type, DataContractJsonSerializer> Serializers =
+            new ConcurrentDictionary<Type, DataContractJsonSerializer>();
 
         public static byte[] Serialize<T>(T value)
         {
-            var serializer = new DataContractJsonSerializer(typeof(T));
+            var serializer = GetSerializer(typeof(T));
             using (var stream = new MemoryStream())
             {
                 serializer.WriteObject(stream, value);
@@ -21,6 +25,16 @@ namespace LanBridge.Core
             }
         }
 
+        private static DataContractJsonSerializer GetSerializer(Type type)
+        {
+            return Serializers.GetOrAdd(type, value => new DataContractJsonSerializer(
+                value,
+                new DataContractJsonSerializerSettings
+                {
+                    MaxItemsInObjectGraph = MaxObjectGraphItems
+                }));
+        }
+
         public static T Deserialize<T>(byte[] payload)
         {
             if (payload == null) throw new ArgumentNullException(nameof(payload));
@@ -29,7 +43,7 @@ namespace LanBridge.Core
 
             try
             {
-                var serializer = new DataContractJsonSerializer(typeof(T));
+                var serializer = GetSerializer(typeof(T));
                 using (var stream = new MemoryStream(payload))
                 {
                     var value = serializer.ReadObject(stream);
