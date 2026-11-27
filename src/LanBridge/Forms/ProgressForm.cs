@@ -121,6 +121,12 @@ namespace LanBridge
                 _closeTimer.Stop();
                 Close();
             };
+
+            FormClosing += (s, e) =>
+            {
+                if (_terminal) return;
+                try { _cancel?.Invoke(); } catch { }
+            };
         }
 
         public void Apply(TransferProgress progress)
@@ -138,7 +144,7 @@ namespace LanBridge
                 _lastPaint = Environment.TickCount;
             }
 
-            if (progress.IsComplete)
+            if (progress.OverallComplete)
             {
                 _terminal = true;
                 _bar.Value = 100;
@@ -173,6 +179,12 @@ namespace LanBridge
             var overall = progress.FileCount > 0
                 ? ((progress.FileIndex + fraction) / progress.FileCount) * 100d
                 : 0d;
+            if (progress.IsComplete)
+            {
+                overall = progress.FileCount > 0
+                    ? ((double)(progress.FileIndex + 1) / progress.FileCount) * 100d
+                    : 100d;
+            }
             var value = (int)Math.Max(0d, Math.Min(100d, overall));
 
             _bar.Value = value;

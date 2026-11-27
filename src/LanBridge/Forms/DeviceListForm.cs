@@ -14,6 +14,7 @@ namespace LanBridge
     {
         IReadOnlyList<DeviceRow> BuildRows();
         bool Discoverable { get; }
+        bool FirewallRulePresent { get; }
         Task<PairingAttemptResult> PairAsync(DeviceRow row);
         Task AddManualDeviceAsync();
         Task<TransferResult> SendAsync(DeviceRow row, IReadOnlyList<string> files);
@@ -21,6 +22,7 @@ namespace LanBridge
         void RefreshDiscovery();
         void ShowSettings();
         void ShowAbout();
+        Task CheckForUpdatesAsync();
     }
 
     internal sealed class DeviceListForm : Form
@@ -33,13 +35,15 @@ namespace LanBridge
         private readonly Label _headerSubtitle;
         private readonly Button _primary;
         private readonly Button _refresh;
-        private readonly Button _addIp;
         private readonly Button _settings;
-        private readonly Button _about;
-        private readonly Button _close;
+        private readonly Button _more;
         private readonly Timer _timer;
+        private readonly Timer _resizeTimer;
+        private readonly ToolTip _toolTip;
+        private bool _manualBusy;
         private readonly Font _boldFont;
         private readonly ContextMenuStrip _menu;
+        private readonly ContextMenuStrip _moreMenu;
         private readonly ILogger _log;
         private readonly ToolStripMenuItem _unpairItem;
         private readonly ToolStripMenuItem _copyItem;
@@ -152,7 +156,7 @@ namespace LanBridge
             };
             body.Controls.Add(listPanel, 0, 1);
 
-            _list = new ListView
+            _list = new BufferedListView
             {
                 Dock = DockStyle.Fill,
                 View = View.Details,
@@ -169,7 +173,22 @@ namespace LanBridge
             _list.Columns.Add("Status", 120);
             _list.Columns.Add("Address", 170);
             _list.Columns.Add("Last seen", 140);
-            _list.Resize += (s, e) => ResizeColumns();
+            _resizeTimer = new Timer { Interval = 80 };
+            _resizeTimer.Tick += (s, e) =>
+            {
+                _resizeTimer.Stop();
+                ResizeColumns();
+                if (!IsDisposed) _list.Scrollable = true;
+            };
+            _list.Resize += (s, e) =>
+            {
+                // Hide scrollbars while the user drags the window edge. Column
+                // widths are recalculated after the resize settles, which avoids
+                // the one-frame scrollbar flash.
+                _list.Scrollable = false;
+                _resizeTimer.Stop();
+                _resizeTimer.Start();
+            };
             _list.SelectedIndexChanged += (s, e) => UpdatePrimary();
             _list.DoubleClick += async (s, e) => await PrimaryActionAsync();
             _list.MouseDown += (s, e) =>
@@ -225,26 +244,26 @@ namespace LanBridge
                 RefreshRows(true);
             };
             buttons.Controls.Add(_refresh);
-
-            _addIp = MakeButton("Add by IP…", false);
-            _addIp.Click += async (s, e) =>
-            {
-                await _host.AddManualDeviceAsync();
-                RefreshRows(true);
-            };
-            buttons.Controls.Add(_addIp);
+            _toolTip = new ToolTip();
+            _toolTip.SetToolTip(_refresh, "Refresh the device list (F5)");
 
             _settings = MakeButton("Settings", false);
             _settings.Click += (s, e) => _host.ShowSettings();
+            _toolTip.SetToolTip(_settings, "Open settings (Ctrl+,)");
             buttons.Controls.Add(_settings);
 
-            _about = MakeButton("About", false);
-            _about.Click += (s, e) => _host.ShowAbout();
-            buttons.Controls.Add(_about);
-
-            _close = MakeButton("Close", false);
-            _close.Click += (s, e) => Close();
-            buttons.Controls.Add(_close);
+            _more = MakeButton("More…", false);
+            _moreMenu = new ContextMenuStrip
+            {
+                ShowImageMargin = false
+            };
+            _moreMenu.Items.Add(new ToolStripMenuItem("Check for updates…", null, async (s, e) => await _host.CheckForUpdatesAsync()));
+            _moreMenu.Items.Add(new ToolStripMenuItem("Add device by IP…", null, async (s, e) => await AddManualAsync()));
+            _moreMenu.Items.Add(new ToolStripSeparator());
+            _moreMenu.Items.Add(new ToolStripMenuItem("About LanBridge", null, (s, e) => _host.ShowAbout()));
+            _more.Click += (s, e) => _moreMenu.Show(_more, new Point(0, 0), ToolStripDropDownDirection.AboveRight);
+            _toolTip.SetToolTip(_more, "Updates, add a device by IP, and about");
+            buttons.Controls.Add(_more);
 
             _menu = new ContextMenuStrip();
             _unpairItem = new ToolStripMenuItem("Unpair this device");
@@ -266,6 +285,22 @@ namespace LanBridge
                 _copyItem.Enabled = row != null;
             };
             _list.ContextMenuStrip = _menu;
+
+            KeyPreview = true;
+            KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.F5)
+                {
+                    _host.RefreshDiscovery();
+                    RefreshRows(true);
+                    e.SuppressKeyPress = true;
+                }
+                else if (e.Control && e.KeyCode == Keys.Oemcomma)
+                {
+                    _host.ShowSettings();
+                    e.SuppressKeyPress = true;
+                }
+            };
 
             AllowDrop = true;
             DragEnter += OnDragEnter;
@@ -310,6 +345,21 @@ namespace LanBridge
             UpdatePrimary();
         }
 
+        private async Task AddManualAsync()
+        {
+            if (_manualBusy) return;
+            _manualBusy = true;
+            try
+            {
+                await _host.AddManualDeviceAsync();
+            }
+            finally
+            {
+                _manualBusy = false;
+                if (!IsDisposed) RefreshRows(true);
+            }
+        }
+
         private async Task PrimaryActionAsync()
         {
             var row = SelectedRow;
@@ -337,6 +387,7 @@ namespace LanBridge
                 {
                     _primary.Text = "Pairing…";
                     var result = await _host.PairAsync(row);
+                    if (IsDisposed) return;
                     if (!result.Success)
                     {
                         ShowError(result.ErrorCode);
@@ -368,12 +419,13 @@ namespace LanBridge
             catch (Exception ex)
             {
                 _log.Error("Device list action failed", ex);
-                MessageBox.Show(this, ex.Message, "LanBridge", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                if (!IsDisposed)
+                    MessageBox.Show(this, ex.Message, "LanBridge", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
             {
                 _busy = false;
-                RefreshRows(true);
+                if (!IsDisposed) RefreshRows(true);
             }
         }
 
@@ -389,7 +441,9 @@ namespace LanBridge
             _primary.Enabled = false;
             _primary.Text = "Sending…";
             var result = await _host.SendAsync(row, files);
-            if (!result.Success && !string.Equals(result.ErrorCode, "cancelled", StringComparison.OrdinalIgnoreCase))
+            if (!IsDisposed &&
+                !result.Success &&
+                !string.Equals(result.ErrorCode, "cancelled", StringComparison.OrdinalIgnoreCase))
             {
                 ShowError(result.ErrorCode);
             }
@@ -403,6 +457,10 @@ namespace LanBridge
 
             if (changed)
             {
+                _list.Scrollable = false;
+                _resizeTimer.Stop();
+                _resizeTimer.Start();
+
                 var selected = SelectedRow;
                 var selectedFingerprint = selected?.Fingerprint;
 
@@ -545,16 +603,17 @@ namespace LanBridge
         private string BuildStatus(IReadOnlyList<DeviceRow> rows)
         {
             var hidden = _host.Discoverable ? string.Empty : "  •  Hidden";
+            var firewall = _host.FirewallRulePresent ? string.Empty : "  •  Firewall rule missing";
             if (rows.Count == 0)
             {
-                return _host.Discoverable
+                return (_host.Discoverable
                     ? "Looking for devices on your network…"
-                    : "Hidden — other laptops cannot find this one.";
+                    : "Hidden — other laptops cannot find this one.") + firewall;
             }
 
             var paired = rows.Count(row => row.State == DeviceState.Paired);
             var available = rows.Count(row => row.State == DeviceState.Available);
-            return paired + " paired  •  " + available + " available" + hidden;
+            return paired + " paired  •  " + available + " available" + hidden + firewall;
         }
 
         private string EmptyText()
@@ -628,6 +687,7 @@ namespace LanBridge
         private void ShowError(string code)
         {
             _log.Warn("Device list operation failed: " + Sanitizer.SanitizeLogValue(code));
+            if (IsDisposed) return;
             MessageBox.Show(
                 this,
                 Sanitizer.MapError(code),
@@ -656,12 +716,28 @@ namespace LanBridge
         {
             _timer.Stop();
             _timer.Dispose();
+            _resizeTimer.Stop();
+            _resizeTimer.Dispose();
             _menu.Dispose();
+            _moreMenu.Dispose();
+            _toolTip.Dispose();
             _boldFont.Dispose();
             base.OnFormClosed(e);
         }
 
-                private static Button MakeButton(string text, bool primary)
+        private sealed class BufferedListView : ListView
+        {
+            public BufferedListView()
+            {
+                DoubleBuffered = true;
+                SetStyle(
+                    ControlStyles.OptimizedDoubleBuffer |
+                    ControlStyles.AllPaintingInWmPaint,
+                    true);
+            }
+        }
+
+        private static Button MakeButton(string text, bool primary)
         {
             return UiTheme.CreateButton(text, primary);
         }

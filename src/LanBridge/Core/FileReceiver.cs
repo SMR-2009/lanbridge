@@ -36,8 +36,10 @@ namespace LanBridge.Core
     {
         private const string PartExtension = ".part";
         private const string ResumeExtension = ".resume";
+        public const string PartFolderName = ".lanbridge-parts";
 
         private readonly string _folder;
+        private readonly string _partFolder;
         private readonly string _sanitizedName;
         private readonly long _expectedSize;
         private FileStream _stream;
@@ -48,6 +50,7 @@ namespace LanBridge.Core
         private bool _aborted;
         private bool _preserved;
         private bool _disposed;
+        private bool _hashFinalized;
 
         public string PartPath { get; }
         public string FinalPath { get; private set; }
@@ -60,9 +63,11 @@ namespace LanBridge.Core
 
             Directory.CreateDirectory(receiveFolder);
             _folder = Path.GetFullPath(receiveFolder);
+            _partFolder = Path.Combine(_folder, PartFolderName);
+            Directory.CreateDirectory(_partFolder);
             _sanitizedName = PathGuard.SanitizeFileName(remoteName);
             _expectedSize = expectedSize;
-            PartPath = PathGuard.GetUniquePath(_folder, _sanitizedName + PartExtension);
+            PartPath = PathGuard.GetUniquePath(_partFolder, _sanitizedName + PartExtension);
 
             _stream = new FileStream(
                 PartPath,
@@ -84,14 +89,16 @@ namespace LanBridge.Core
         {
             Directory.CreateDirectory(receiveFolder);
             _folder = Path.GetFullPath(receiveFolder);
+            _partFolder = Path.Combine(_folder, PartFolderName);
+            Directory.CreateDirectory(_partFolder);
             _sanitizedName = PathGuard.SanitizeFileName(remoteName);
             _expectedSize = expectedSize;
 
             if (offset <= 0 || offset > expectedSize)
                 throw new InvalidDataException("The resume offset is invalid.");
             if (string.IsNullOrEmpty(partPath) ||
-                !string.Equals(Path.GetDirectoryName(Path.GetFullPath(partPath)), _folder, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("The resume file is outside the receive folder.");
+                !string.Equals(Path.GetDirectoryName(Path.GetFullPath(partPath)), _partFolder, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("The resume file is outside the private parts folder.");
 
             PartPath = Path.GetFullPath(partPath);
             if (!File.Exists(PartPath)) throw new FileNotFoundException("The partial file is missing.", PartPath);
@@ -161,12 +168,14 @@ namespace LanBridge.Core
             if (_completed) throw new InvalidOperationException("The receiver is already complete.");
             if (_aborted || _preserved) throw new InvalidOperationException("The receiver is already closed.");
 
+            var verified = false;
             try
             {
                 if (_written != _expectedSize)
                     throw new InvalidDataException("The received size did not match the declared size.");
 
                 _sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                _hashFinalized = true;
                 var actual = Hex(_sha.Hash);
                 if (!string.Equals(actual, expectedSha256Hex, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("The received file did not match its checksum.");
@@ -174,6 +183,7 @@ namespace LanBridge.Core
                 _stream.Flush(true);
                 _stream.Dispose();
                 _stream = null;
+                verified = true;
 
                 var finalPath = PathGuard.GetUniquePath(_folder, _sanitizedName);
                 for (var attempt = 0; attempt < 5; attempt++)
@@ -198,13 +208,17 @@ namespace LanBridge.Core
             }
             catch
             {
-                Abort();
+                if (verified)
+                    PreservePartial();
+                else
+                    Abort();
                 throw;
             }
         }
 
         /// <summary>
-        /// Keeps a partial file so the next attempt can resume it.
+        /// Keeps a partial file so the next attempt can resume it. A failed final
+        /// rename also preserves the verified bytes instead of deleting them.
         /// A bad checksum or a deliberate cancel still calls Abort and removes it.
         /// </summary>
         public void PreservePartial()
@@ -215,7 +229,11 @@ namespace LanBridge.Core
             {
                 if (_sha != null)
                 {
-                    _sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                    if (!_hashFinalized)
+                    {
+                        _sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                        _hashFinalized = true;
+                    }
                     WriteMetadata(_written, Hex(_sha.Hash));
                 }
 
@@ -254,6 +272,20 @@ namespace LanBridge.Core
             DeleteMetadata();
         }
 
+        public static void DeleteResumePoint(ResumePoint point)
+        {
+            if (point == null || string.IsNullOrEmpty(point.PartPath)) return;
+            try { if (File.Exists(point.PartPath)) File.Delete(point.PartPath); } catch { }
+            try
+            {
+                var metadata = point.PartPath + ResumeExtension;
+                if (File.Exists(metadata)) File.Delete(metadata);
+            }
+            catch
+            {
+            }
+        }
+
         public static ResumePoint FindResume(string folder, string remoteName, long expectedSize)
         {
             if (string.IsNullOrWhiteSpace(folder) || expectedSize <= 0) return null;
@@ -270,31 +302,59 @@ namespace LanBridge.Core
             }
 
             var sanitized = PathGuard.SanitizeFileName(remoteName);
-            foreach (var sidecar in Directory.EnumerateFiles(fullFolder, "*" + PartExtension + ResumeExtension, SearchOption.TopDirectoryOnly))
+            var partFolder = Path.Combine(fullFolder, PartFolderName);
+            if (!Directory.Exists(partFolder)) return null;
+
+            IEnumerable<string> sidecars;
+            try
+            {
+                sidecars = Directory.EnumerateFiles(
+                    partFolder,
+                    "*" + PartExtension + ResumeExtension,
+                    SearchOption.TopDirectoryOnly);
+            }
+            catch
+            {
+                return null;
+            }
+
+            foreach (var sidecar in sidecars)
             {
                 try
                 {
+                    var sidecarPartName = Path.GetFileName(sidecar);
+                    if (string.IsNullOrEmpty(sidecarPartName) ||
+                        !sidecarPartName.EndsWith(PartExtension + ResumeExtension, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    var expectedPartName = sidecarPartName.Substring(
+                        0,
+                        sidecarPartName.Length - ResumeExtension.Length);
+                    if (!expectedPartName.EndsWith(PartExtension, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
                     var metadata = ProtocolJson.Deserialize<ResumeMetadata>(File.ReadAllBytes(sidecar));
                     if (metadata == null ||
                         metadata.Size != expectedSize ||
-                        !string.Equals(metadata.Name, sanitized, StringComparison.OrdinalIgnoreCase))
+                        !string.Equals(metadata.Name, sanitized, StringComparison.OrdinalIgnoreCase) ||
+                        !string.Equals(metadata.Part, expectedPartName, StringComparison.OrdinalIgnoreCase) ||
+                        metadata.Bytes <= 0)
                     {
                         continue;
                     }
 
-                    if (string.IsNullOrEmpty(metadata.Part) ||
-                        !string.Equals(Path.GetFileName(metadata.Part), metadata.Part, StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
-
-                    var partPath = Path.Combine(fullFolder, metadata.Part);
+                    var partPath = Path.Combine(partFolder, expectedPartName);
                     if (!File.Exists(partPath)) continue;
 
                     var offset = new FileInfo(partPath).Length;
-                    if (offset <= 0 || offset > expectedSize) continue;
+                    if (offset != metadata.Bytes || offset > expectedSize) continue;
 
-                    return new ResumePoint(partPath, offset, HashFile(partPath));
+                    var hash = string.IsNullOrEmpty(metadata.PrefixSha256)
+                        ? HashFile(partPath)
+                        : metadata.PrefixSha256;
+                    return new ResumePoint(partPath, offset, hash);
                 }
                 catch
                 {

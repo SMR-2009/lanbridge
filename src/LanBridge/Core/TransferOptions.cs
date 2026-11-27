@@ -13,6 +13,8 @@ namespace LanBridge.Core
         public TimeSpan FileIdleTimeout { get; set; } = TimeSpan.FromSeconds(60);
         public TimeSpan OfferTimeout { get; set; } = TimeSpan.FromSeconds(120);
         public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(5);
+        public TimeSpan PairingCooldown { get; set; } = TimeSpan.FromSeconds(5);
+        public long MaxReceiveBytes { get; set; } = 100L * 1024 * 1024 * 1024;
     }
 
     internal static class TimeoutIo

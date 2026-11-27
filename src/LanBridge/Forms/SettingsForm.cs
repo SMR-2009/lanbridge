@@ -1,7 +1,9 @@
 using System;
 using System.Diagnostics;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using LanBridge.Core;
 
@@ -17,8 +19,10 @@ namespace LanBridge
         private readonly CheckBox _startWithWindows;
         private readonly CheckBox _visible;
         private readonly CheckBox _autoAccept;
+        private readonly TextBox _maxReceiveBox;
         private readonly Label _status;
         private readonly Label _error;
+        private bool _repairRunning;
 
         public SettingsForm(AppConfig config, string configPath, string logPath)
         {
@@ -27,7 +31,7 @@ namespace LanBridge
             _logPath = logPath;
 
             Text = "LanBridge settings";
-            ClientSize = new Size(560, 540);
+            ClientSize = new Size(560, 590);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -149,6 +153,25 @@ namespace LanBridge
             };
             Controls.Add(autoNote);
 
+            var maxLabel = new Label
+            {
+                Text = "Maximum receive size (GB)",
+                ForeColor = Color.FromArgb(51, 65, 85),
+                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                AutoSize = true,
+                Location = new Point(24, 370)
+            };
+            Controls.Add(maxLabel);
+
+            _maxReceiveBox = new TextBox
+            {
+                Location = new Point(300, 366),
+                Size = new Size(80, 26),
+                Font = new Font("Segoe UI", 9.5f),
+                Text = (config.MaxReceiveBytes / (1024d * 1024d * 1024d)).ToString("0.##", CultureInfo.InvariantCulture)
+            };
+            Controls.Add(_maxReceiveBox);
+
             var repairNote = new Label
             {
                 Text = "Run repair checks the receive folder, settings, startup, stale transfers, and firewall.",
@@ -156,25 +179,26 @@ namespace LanBridge
                 Font = new Font("Segoe UI", 9f),
                 AutoSize = false,
                 Size = new Size(512, 22),
-                Location = new Point(24, 362)
+                Location = new Point(24, 404)
             };
             Controls.Add(repairNote);
 
             var repair = MakeButton("Run repair", false);
-            repair.Location = new Point(24, 390);
+            repair.Location = new Point(24, 432);
             repair.Size = new Size(124, 34);
             repair.Click += async (s, e) =>
             {
                 repair.Enabled = false;
+                _repairRunning = true;
                 _error.Text = string.Empty;
                 _status.Text = "Checking settings, startup, and firewall...";
 
                 try
                 {
-                    var report = await RepairService.RunAsync(
+                    var report = await Task.Run(() => RepairService.RunAsync(
                         _config,
                         _configPath,
-                        Application.ExecutablePath);
+                        Application.ExecutablePath));
 
                     if (IsDisposed) return;
 
@@ -190,19 +214,20 @@ namespace LanBridge
                 }
                 finally
                 {
+                    _repairRunning = false;
                     if (!IsDisposed) repair.Enabled = true;
                 }
             };
             Controls.Add(repair);
 
             var repairDetails = MakeButton("Repair details", false);
-            repairDetails.Location = new Point(156, 390);
+            repairDetails.Location = new Point(156, 432);
             repairDetails.Size = new Size(132, 34);
             repairDetails.Click += (s, e) => ShowRepairDetails();
             Controls.Add(repairDetails);
 
             var openLogs = MakeButton("Open logs", false);
-            openLogs.Location = new Point(296, 390);
+            openLogs.Location = new Point(296, 432);
             openLogs.Size = new Size(112, 34);
             openLogs.Click += (s, e) => OpenLogs();
             Controls.Add(openLogs);
@@ -213,7 +238,7 @@ namespace LanBridge
                 Font = new Font("Segoe UI", 9f),
                 AutoSize = false,
                 Size = new Size(512, 22),
-                Location = new Point(24, 434)
+                Location = new Point(24, 476)
             };
             Controls.Add(_status);
 
@@ -223,12 +248,12 @@ namespace LanBridge
                 Font = new Font("Segoe UI", 9f),
                 AutoSize = false,
                 Size = new Size(512, 22),
-                Location = new Point(24, 458)
+                Location = new Point(24, 500)
             };
             Controls.Add(_error);
 
             var cancel = MakeButton("Cancel", false);
-            cancel.Location = new Point(328, 490);
+            cancel.Location = new Point(328, 532);
             cancel.Click += (s, e) =>
             {
                 DialogResult = DialogResult.Cancel;
@@ -238,7 +263,7 @@ namespace LanBridge
             CancelButton = cancel;
 
             var save = MakeButton("Save", true);
-            save.Location = new Point(432, 490);
+            save.Location = new Point(432, 532);
             save.Click += (s, e) => Save();
             Controls.Add(save);
             AcceptButton = save;
@@ -262,6 +287,12 @@ namespace LanBridge
 
         private void Save()
         {
+            if (_repairRunning)
+            {
+                _error.Text = "Wait for the repair check to finish.";
+                return;
+            }
+
             var name = Sanitizer.SanitizeDeviceName(_nameBox.Text);
             var folder = (_folderBox.Text ?? string.Empty).Trim();
             if (string.IsNullOrEmpty(folder))
@@ -280,8 +311,21 @@ namespace LanBridge
                 return;
             }
 
+            double maxGb;
+            if (!double.TryParse(
+                    (_maxReceiveBox.Text ?? string.Empty).Trim(),
+                    NumberStyles.AllowDecimalPoint,
+                    CultureInfo.InvariantCulture,
+                    out maxGb) ||
+                maxGb <= 0 || maxGb > 1024)
+            {
+                _error.Text = "Enter a maximum receive size between 0.01 and 1024 GB.";
+                return;
+            }
+
             _config.DeviceName = name;
             _config.ReceiveFolder = folder;
+            _config.MaxReceiveBytes = (long)(maxGb * 1024d * 1024d * 1024d);
             _config.StartWithWindows = _startWithWindows.Checked;
             _config.Discoverable = _visible.Checked;
             _config.AutoAcceptFromPaired = _autoAccept.Checked;

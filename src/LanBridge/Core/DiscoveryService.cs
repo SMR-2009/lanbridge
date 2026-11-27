@@ -113,6 +113,9 @@ namespace LanBridge.Core
         private readonly Dictionary<string, DateTime> _rateLimits =
             new Dictionary<string, DateTime>(StringComparer.Ordinal);
         private readonly SemaphoreSlim _packetSlots = new SemaphoreSlim(8, 8);
+        private const int MaxDevices = 256;
+        private const int MaxConfirmEntries = 256;
+        private const int MaxRateEntries = 256;
 
         private UdpClient _udp;
         private int _rejectedPacketCount;
@@ -264,10 +267,11 @@ namespace LanBridge.Core
                 if (string.IsNullOrEmpty(data.Fp) || data.Fp.Length != 64) return;
 
                 var now = DateTime.UtcNow;
+                var confirmKey = data.Fp + "|" + remote.Address + "|" + data.Port;
                 var needsConfirmation = true;
                 lock (_gate)
                 {
-                    if (_confirmCache.TryGetValue(data.Fp, out var confirmedAt) &&
+                    if (_confirmCache.TryGetValue(confirmKey, out var confirmedAt) &&
                         now - confirmedAt < TimeSpan.FromSeconds(10))
                     {
                         needsConfirmation = false;
@@ -294,7 +298,11 @@ namespace LanBridge.Core
                     }
 
                     if (!confirmed) return;
-                    lock (_gate) _confirmCache[data.Fp] = now;
+                    lock (_gate)
+                    {
+                        _confirmCache[confirmKey] = now;
+                        TrimOldest(_confirmCache, MaxConfirmEntries);
+                    }
                 }
 
                 DiscoveredDevice device;
@@ -314,6 +322,7 @@ namespace LanBridge.Core
                         };
                         _devices[data.Fp] = device;
                         isNew = true;
+                        TrimOldestDevices();
                     }
                     else
                     {
@@ -327,7 +336,14 @@ namespace LanBridge.Core
 
                 if (_peers.ContainsFingerprint(data.Fp))
                 {
-                    _peers.UpdateEndpoint(data.Fp, remote.Address.ToString(), data.Port);
+                    if (_peers.UpdateEndpoint(data.Fp, remote.Address.ToString(), data.Port))
+                    {
+                        try { _peers.Save(); }
+                        catch (Exception ex)
+                        {
+                            _log.Warn("Could not persist the peer endpoint: " + Sanitizer.SanitizeLogValue(ex.Message));
+                        }
+                    }
                 }
 
                 if (isNew) DeviceConfirmed?.Invoke(device);
@@ -511,7 +527,27 @@ namespace LanBridge.Core
                 if (_rateLimits.TryGetValue(key, out var last) && now - last < TimeSpan.FromMilliseconds(250))
                     return false;
                 _rateLimits[key] = now;
+                TrimOldest(_rateLimits, MaxRateEntries);
                 return true;
+            }
+        }
+
+        private void TrimOldest(Dictionary<string, DateTime> values, int limit)
+        {
+            if (values.Count <= limit) return;
+            foreach (var key in values.OrderBy(pair => pair.Value).Take(values.Count - limit).Select(pair => pair.Key).ToList())
+                values.Remove(key);
+        }
+
+        private void TrimOldestDevices()
+        {
+            if (_devices.Count <= MaxDevices) return;
+            foreach (var key in _devices.OrderBy(pair => pair.Value.LastSeenUtc)
+                .Take(_devices.Count - MaxDevices)
+                .Select(pair => pair.Key)
+                .ToList())
+            {
+                _devices.Remove(key);
             }
         }
 

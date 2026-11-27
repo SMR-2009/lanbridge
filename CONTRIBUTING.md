@@ -4,7 +4,7 @@ Thanks for helping. LanBridge is deliberately small: a Windows tray app that sen
 
 ## Build and test
 
-Requirements: Windows 10 1903 or later, .NET SDK 8, and the .NET Framework 4.8 targeting pack (installed by the SDK on Windows).
+Requirements: Windows 11, .NET SDK 10, and the .NET Framework 4.8 targeting pack (installed by the SDK on Windows).
 
 ```powershell
 dotnet restore LanBridge.sln

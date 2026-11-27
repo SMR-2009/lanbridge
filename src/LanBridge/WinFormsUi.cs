@@ -100,7 +100,7 @@ namespace LanBridge
             var result = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             if (cancellationToken.IsCancellationRequested)
             {
-                result.TrySetResult(false);
+                result.TrySetException(new OperationCanceledException(cancellationToken));
                 return result.Task;
             }
 
@@ -110,14 +110,17 @@ namespace LanBridge
                     + "; formInvokeRequired=" + (_pairingForm != null && _pairingForm.InvokeRequired));
                 if (cancellationToken.IsCancellationRequested)
                 {
-                    result.TrySetResult(false);
+                    result.TrySetException(new OperationCanceledException(cancellationToken));
                     return;
                 }
 
                 if (_pairingForm != null && !_pairingForm.IsDisposed)
                 {
-                    _pairingForm.Activate();
-                    return;
+                    // A previous pairing may still be closing while a new
+                    // connection acquires the server gate. Close it instead of
+                    // activating a form that is not wired to this task.
+                    _pairingForm.Close();
+                    _pairingForm = null;
                 }
 
                 var form = new PairingForm(request.Peer, _log);
@@ -127,7 +130,10 @@ namespace LanBridge
                 form.FormClosed += (s, e) =>
                 {
                     if (_pairingForm == form) _pairingForm = null;
-                    result.TrySetResult(false);
+                    if (cancellationToken.IsCancellationRequested)
+                        result.TrySetException(new OperationCanceledException(cancellationToken));
+                    else
+                        result.TrySetResult(false);
                 };
                 form.Show();
                 form.Activate();
@@ -137,9 +143,9 @@ namespace LanBridge
             var registration = cancellationToken.Register(() => RunOnUi(() =>
             {
                 var form = _pairingForm;
-                _pairingForm = null;
                 if (form != null && !form.IsDisposed) form.Close();
-                result.TrySetResult(false);
+                if (ReferenceEquals(_pairingForm, form)) _pairingForm = null;
+                result.TrySetException(new OperationCanceledException(cancellationToken));
             }));
             result.Task.ContinueWith(_ => registration.Dispose(), TaskScheduler.Default);
 
@@ -225,8 +231,8 @@ namespace LanBridge
                 RunOnUi(() =>
                 {
                     var form = _codeForm;
-                    _codeForm = null;
                     if (form != null && !form.IsDisposed) form.Close();
+                    if (ReferenceEquals(_codeForm, form)) _codeForm = null;
                     result.TrySetResult(null);
                 });
             });
@@ -242,7 +248,7 @@ namespace LanBridge
 
             if (cancellationToken.IsCancellationRequested)
             {
-                result.TrySetResult(false);
+                result.TrySetException(new OperationCanceledException(cancellationToken));
                 return result.Task;
             }
 
@@ -250,7 +256,7 @@ namespace LanBridge
             {
                 if (Volatile.Read(ref cancelled[0]) != 0 || cancellationToken.IsCancellationRequested)
                 {
-                    result.TrySetResult(false);
+                    result.TrySetException(new OperationCanceledException(cancellationToken));
                     return;
                 }
 
@@ -263,7 +269,10 @@ namespace LanBridge
                 form.FormClosed += (s, e) =>
                 {
                     if (_offerForm == form) _offerForm = null;
-                    result.TrySetResult(false);
+                    if (cancellationToken.IsCancellationRequested)
+                        result.TrySetException(new OperationCanceledException(cancellationToken));
+                    else
+                        result.TrySetResult(false);
                 };
                 form.Show();
                 form.Activate();
@@ -275,9 +284,9 @@ namespace LanBridge
                 RunOnUi(() =>
                 {
                     var form = _offerForm;
-                    _offerForm = null;
                     if (form != null && !form.IsDisposed) form.Close();
-                    result.TrySetResult(false);
+                    if (ReferenceEquals(_offerForm, form)) _offerForm = null;
+                    result.TrySetException(new OperationCanceledException(cancellationToken));
                 });
             });
             result.Task.ContinueWith(_ => registration.Dispose(), TaskScheduler.Default);

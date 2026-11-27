@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.IO;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using LanBridge.Core;
 
@@ -13,6 +14,7 @@ namespace LanBridge
         private readonly TextBox _folderBox;
         private readonly CheckBox _startWithWindows;
         private readonly CheckBox _firewall;
+        private readonly Label _firewallNote;
         private readonly Label _error;
 
         public AppConfig Config => _config;
@@ -115,32 +117,51 @@ namespace LanBridge
             };
             Controls.Add(_startWithWindows);
 
-            var firewallRulePresent = Firewall.IsRulePresentFor(Application.ExecutablePath);
             _firewall = new CheckBox
             {
-                Text = firewallRulePresent
-                    ? "Windows Firewall is already configured"
-                    : "Allow LanBridge through Windows Firewall",
+                Text = "Allow LanBridge through Windows Firewall",
                 Checked = true,
-                Enabled = !firewallRulePresent,
+                Enabled = true,
                 AutoSize = true,
                 ForeColor = Color.FromArgb(51, 65, 85),
                 Location = new Point(24, 300)
             };
             Controls.Add(_firewall);
 
-            var firewallNote = new Label
+            _firewallNote = new Label
             {
-                Text = firewallRulePresent
-                    ? "The installer already added the rule. This setup will not ask for administrator permission."
-                    : "Windows will ask for permission once (UAC). The rule is limited to your local network. You can skip it and repair it later in Settings.",
+                Text = "The installer may already have added this rule. Setup asks only if Windows needs it.",
                 ForeColor = Color.FromArgb(100, 116, 139),
                 Font = new Font("Segoe UI", 9f),
                 AutoSize = false,
                 Size = new Size(516, 36),
                 Location = new Point(24, 332)
             };
-            Controls.Add(firewallNote);
+            Controls.Add(_firewallNote);
+            Shown += async (s, e) =>
+            {
+                try
+                {
+                    var present = await Task.Run(() => Firewall.IsRulePresentFor(Application.ExecutablePath));
+                    if (IsDisposed) return;
+                    if (present)
+                    {
+                        _firewall.Checked = false;
+                        _firewall.Enabled = false;
+                        _firewall.Text = "Windows Firewall is already configured";
+                        _firewallNote.Text = "The installer already added the rule. This setup will not ask for administrator permission.";
+                    }
+                    else
+                    {
+                        _firewallNote.Text = "Windows will ask for permission once (UAC). The rule is limited to your local network. You can skip it and repair it later in Settings.";
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (!IsDisposed)
+                        _firewallNote.Text = "Could not check Windows Firewall: " + ex.Message;
+                }
+            };
 
             _error = new Label
             {

@@ -110,7 +110,7 @@ namespace LanBridge
             Controls.Add(accept);
 
             _decline = MakeButton("Decline", false);
-            _decline.Location = new Point(420, 374);
+            _decline.Location = new Point(436, 374);
             _decline.Click += (s, e) =>
             {
                 Declined?.Invoke();

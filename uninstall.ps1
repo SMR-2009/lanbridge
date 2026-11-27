@@ -5,18 +5,58 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
+$failed = $false
 
-Get-Process -Name "LanBridge" -ErrorAction SilentlyContinue | Stop-Process -Force
+if ([string]::IsNullOrWhiteSpace($InstallDir)) {
+    Write-Warning "InstallDir cannot be empty."
+    $failed = $true
+}
+else {
+    $resolvedInstall = [IO.Path]::GetFullPath(
+        [Environment]::ExpandEnvironmentVariables($InstallDir))
+    $targetExe = Join-Path $resolvedInstall "LanBridge.exe"
 
-$shortcutPath = Join-Path ([Environment]::GetFolderPath("Programs")) "LanBridge.lnk"
-if (Test-Path $shortcutPath) {
-    Remove-Item -Path $shortcutPath -Force
-    Write-Host "Removed the Start Menu shortcut." -ForegroundColor DarkGray
+    $root = [IO.Path]::GetPathRoot($resolvedInstall)
+    if ([string]::Equals(
+            $resolvedInstall.TrimEnd('\'),
+            $root.TrimEnd('\'),
+            [StringComparison]::OrdinalIgnoreCase) -or
+        -not (Test-Path -LiteralPath $targetExe -PathType Leaf)) {
+        Write-Warning "Refusing to remove $resolvedInstall because it does not contain LanBridge.exe."
+        $failed = $true
+    }
+    else {
+        Get-Process -Name "LanBridge" -ErrorAction SilentlyContinue | ForEach-Object {
+            try {
+                if ([string]::Equals($_.Path, $targetExe, [StringComparison]::OrdinalIgnoreCase)) {
+                    Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+                }
+            }
+            catch {
+            }
+        }
+
+        try {
+            Remove-Item -LiteralPath $resolvedInstall -Recurse -Force -ErrorAction Stop
+            Write-Host "Removed $resolvedInstall" -ForegroundColor DarkGray
+        }
+        catch {
+            Write-Warning "Could not remove $resolvedInstall`: $($_.Exception.Message)"
+            $failed = $true
+        }
+    }
 }
 
-if (Test-Path $InstallDir) {
-    Remove-Item -Path $InstallDir -Recurse -Force
-    Write-Host "Removed $InstallDir" -ForegroundColor DarkGray
+$shortcutPath = Join-Path ([Environment]::GetFolderPath("Programs")) "LanBridge.lnk"
+if (Test-Path -LiteralPath $shortcutPath) {
+    try {
+        Remove-Item -LiteralPath $shortcutPath -Force -ErrorAction Stop
+        Write-Host "Removed the Start Menu shortcut." -ForegroundColor DarkGray
+    }
+    catch {
+        Write-Warning "Could not remove the Start Menu shortcut: $($_.Exception.Message)"
+        $failed = $true
+    }
 }
 
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
@@ -34,10 +74,21 @@ catch {
 
 if ($RemoveData) {
     $appData = Join-Path $env:APPDATA "LanBridge"
-    if (Test-Path $appData) {
-        Remove-Item -Path $appData -Recurse -Force
-        Write-Host "Removed LanBridge settings and logs." -ForegroundColor DarkGray
+    if (Test-Path -LiteralPath $appData) {
+        try {
+            Remove-Item -LiteralPath $appData -Recurse -Force -ErrorAction Stop
+            Write-Host "Removed LanBridge settings and logs." -ForegroundColor DarkGray
+        }
+        catch {
+            Write-Warning "Could not remove LanBridge settings: $($_.Exception.Message)"
+            $failed = $true
+        }
     }
+}
+
+if ($failed) {
+    Write-Host "LanBridge uninstall finished with warnings." -ForegroundColor Yellow
+    return
 }
 
 Write-Host "LanBridge uninstalled." -ForegroundColor Green

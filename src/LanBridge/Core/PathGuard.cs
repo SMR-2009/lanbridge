@@ -12,9 +12,11 @@ namespace LanBridge.Core
 
         private static readonly HashSet<string> Reserved = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "CON", "PRN", "AUX", "NUL",
+            "CON", "PRN", "AUX", "NUL", "CLOCK$",
             "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+            "COM\u00b9", "COM\u00b2", "COM\u00b3",
+            "LPT\u00b9", "LPT\u00b2", "LPT\u00b3"
         };
 
         private static readonly HashSet<char> Invalid = BuildInvalidSet();
@@ -43,8 +45,10 @@ namespace LanBridge.Core
 
             result = LimitLength(result, MaxNameLength);
 
-            var baseName = Path.GetFileNameWithoutExtension(result);
-            if (Reserved.Contains(baseName)) result = "_" + result;
+            // Windows resolves the reserved device name from the segment before
+            // the first dot, so NUL.tar.gz and CON .txt are still devices.
+            var firstSegment = result.Split('.')[0].TrimEnd(' ', '.');
+            if (Reserved.Contains(firstSegment)) result = "_" + result;
             result = LimitLength(result, MaxNameLength).TrimEnd(' ', '.');
 
             return string.IsNullOrEmpty(result) ? "file" : result;

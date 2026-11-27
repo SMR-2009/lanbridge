@@ -16,7 +16,9 @@ namespace LanBridge.Tests
             config.ReceiveFolder = Path.Combine(profile.Root, "received-new");
             Directory.CreateDirectory(config.ReceiveFolder);
 
-            var stale = Path.Combine(config.ReceiveFolder, "old.bin.part");
+            var parts = Path.Combine(config.ReceiveFolder, FileReceiver.PartFolderName);
+            Directory.CreateDirectory(parts);
+            var stale = Path.Combine(parts, "old.bin.part");
             File.WriteAllText(stale, "partial");
             File.SetLastWriteTimeUtc(stale, DateTime.UtcNow.AddHours(-2));
 

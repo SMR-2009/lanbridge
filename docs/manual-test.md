@@ -4,7 +4,7 @@ This is the release gate. Run it once with the build you intend to publish. Both
 
 ## Prepare
 
-- [ ] Copy `artifacts\lanbridge-v0.1.7-win.zip` to laptop B, extract it, and run `LanBridge.exe`.
+- [ ] Copy `artifacts\lanbridge-v0.1.8-win.zip` to laptop B, extract it, and run `LanBridge.exe`.
 - [ ] Run `artifacts\LanBridge.exe` on laptop A.
 - [ ] Complete first-run on both: device name, receive folder, and startup choice.
 - [ ] On first install only, approve the UAC prompt for the firewall rule. There should be no UAC prompt on later launches.
@@ -22,7 +22,7 @@ This is the release gate. Run it once with the build you intend to publish. Both
 
 - [ ] Send a 100 MB or larger file. Progress advances on both laptops.
 - [ ] Start a second send while the first is running. The second is refused as busy, not silently dropped.
-- [ ] While receiving, click **Cancel** on B. Both progress dialogs close; no `.part` file remains in B's receive folder.
+- [ ] While receiving, click **Cancel** on B. Both progress dialogs close; no `.part` file remains in B's private `parts` folder.
 - [ ] Send the same file name twice. The second copy becomes `name (1).ext`; the first is never overwritten.
 - [ ] Restart both apps. Send again without pairing; it goes straight through.
 - [ ] Turn **Visible on this network** off on B, then send from A to the paired B. It should still work via B's last endpoint.
