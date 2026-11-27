@@ -1,6 +1,6 @@
 # LanBridge protocol v1
 
-This document describes the wire protocol implemented by LanBridge 0.1.0. It is intentionally small: one TCP port, one UDP port, JSON payloads, and TLS 1.2 with mutual certificates.
+This document describes the wire protocol implemented by LanBridge 0.1.7. It is intentionally small: one TCP port, one UDP port, JSON payloads, and TLS 1.2 with mutual certificates.
 
 ## Transport
 
@@ -43,9 +43,9 @@ Every frame is:
 | 8 | `PAIR_OK` | server → client | empty |
 | 9 | `PAIR_DENY` | server → client | JSON `PairDeny` |
 | 10 | `OFFER` | client → server | JSON `Offer` |
-| 11 | `ACCEPT` | server → client | JSON `Accept` |
+| 11 | `ACCEPT` | server → client | JSON `Accept`, including optional resume offsets |
 | 12 | `REJECT` | server → client | JSON `Reject` |
-| 13 | `FILE_BEGIN` | client → server | JSON `FileBegin` |
+| 13 | `FILE_BEGIN` | client → server | JSON `FileBegin`, including the requested resume offset |
 | 14 | `FILE_DATA` | client → server | binary: 4-byte BE index + bytes |
 | 15 | `FILE_END` | client → server | JSON `FileEnd` |
 | 16 | `FILE_OK` | server → client | JSON `FileOk` |
@@ -87,6 +87,19 @@ All JSON is UTF-8. Unknown fields are ignored so a newer peer can add fields wit
 
 `intent` is one of `ping`, `pair`, or `send`. `paired` is the sender's view of the peer store. `busy` is the server's current inbound state.
 
+An `ACCEPT` may include resume information for every file:
+
+```json
+{
+  "transferId": "...",
+  "resume": [
+    { "index": 0, "offset": 524288, "prefixSha256": "..." }
+  ]
+}
+```
+
+An empty or missing `resume` list means every file starts at zero. The client verifies the local prefix hash before sending the rest.
+
 ## Pairing
 
 Pairing uses a short authentication string (SAS). The code is **derived from both certificates and fresh nonces; it is never sent over the network**.
@@ -123,17 +136,19 @@ A server that receives `PAIR_ABORT` or an invalid proof closes the connection wi
 The initiator must have the server's fingerprint in its peer store, and the server must have the initiator's fingerprint. Both flags in `HELLO` and `HELLO_ACK` must be true.
 
 1. `HELLO { intent: "send", paired: true }` → `HELLO_ACK { paired: true, busy: false }`.
-2. `OFFER { transferId, totalSize, files: [{ name, size }] }` → `ACCEPT { transferId }`, `REJECT { reason }`, or `ERROR`.
+2. `OFFER { transferId, totalSize, files: [{ name, size }] }` → `ACCEPT { transferId, resume }`, `REJECT { reason }`, or `ERROR`.
 3. For each file:
-   - `FILE_BEGIN { index, name, size }`
+   - `FILE_BEGIN { index, name, size, resumeOffset }`
    - one or more `FILE_DATA` frames
    - `FILE_END { index, sha256 }`
    - `FILE_OK { index }` or `FILE_ERROR { index, code, message }`.
+
+Resume is opt-in through the advertised offset. A receiver only offers a partial file when its sidecar name, declared size, and on-disk length are valid. The sender hashes its own prefix and compares it with `prefixSha256`; on a mismatch it sends `CANCEL` and the receiver deletes the partial file. The final SHA-256 always covers the complete file, including the prefix.
 4. After all files: `DONE { transferId }` → `DONE_ACK { transferId }`.
 
 The receiver creates a new file for each entry, writes to a `.part` file, hashes the bytes as they arrive, compares the SHA-256 from `FILE_END`, then renames the `.part` file into place. Existing files are never overwritten: the receiver picks `name (1).ext`, `name (2).ext`, and so on.
 
-Only one inbound transfer and one outbound transfer may run at a time per app. Sending and receiving at the same time is allowed. A `CANCEL` aborts the current transfer; completed files are kept and the partial `.part` file is deleted. If an individual file fails, the whole transfer is aborted with `ERROR { code: "transfer_failed", completed }`; the sender's result reports how many files completed.
+Only one inbound transfer and one outbound transfer may run at a time per app. Sending and receiving at the same time is allowed. A `CANCEL` aborts the current transfer; completed files are kept. A user cancel deletes the partial `.part` file; an interrupted network connection keeps it with a `.part.resume` sidecar for a later retry. If an individual file fails, the whole transfer is aborted with `ERROR { code: "transfer_failed", completed }`; the sender's result reports how many files completed.
 
 `REJECT` reasons include `declined`, `timeout`, and `disk_full`. `ERROR` codes include `not_paired`, `not_lan`, `busy_inbound`, `invalid_offer`, `offer_required`, `file_begin_required`, `transfer_failed`, and `timeout`.
 
@@ -153,6 +168,7 @@ Discovery uses UDP port `45873`, IPv4 only. A packet is `LNB1` followed by UTF-8
 - A received announcement is **not trusted on its own**. Before a device appears in the list, LanBridge opens a TCP/TLS connection and sends `PING`. That proves the sender controls the private key for the certificate whose fingerprint it advertised.
 - Announces are ignored when they match this device's ID or fingerprint, come from an address outside the local subnets, or arrive faster than four per second from one address.
 - A hidden device neither announces nor queries. Paired peers can still reach a hidden device by its last known endpoint because the TCP listener remains available.
+- When broadcast discovery is blocked, the user can enter an IPv4 address and port manually. The manual path uses the same TLS and six-digit pairing flow; the certificate is learned during that session and pinned only after the code succeeds.
 
 ## Limits and timeouts
 
@@ -162,8 +178,8 @@ Discovery uses UDP port `45873`, IPv4 only. A packet is `LNB1` followed by UTF-8
 | Max files per offer | 5,000 |
 | Max control frame | 1 MiB |
 | Max file-data frame | 65,540 bytes |
-| Connect timeout | 10 seconds |
-| Control frame timeout | 10 seconds |
+| Connect timeout | 5 seconds |
+| Control frame timeout | 30 seconds |
 | Pairing approval window | 120 seconds |
 | Pairing code window | 120 seconds |
 | Pairing attempts | 3 local attempts per session |

@@ -79,7 +79,7 @@ LanBridge installer
 
 Usage:
   irm https://github.com/SMR-2009/lanbridge/releases/latest/download/install.ps1 | iex
-  .\install.ps1 [-Version v0.1.4] [-InstallDir PATH] [-NoShortcut]
+  .\install.ps1 [-Version v0.1.7] [-InstallDir PATH] [-NoShortcut]
                 [-NoFirewall] [-SkipLaunch] [-SourceDir PATH] [-Help]
 
   -SourceDir  Install from local release artifacts instead of GitHub.
@@ -309,8 +309,7 @@ try {
                     -ArgumentList $firewallArgs `
                     -Verb RunAs `
                     -Wait `
-                    -PassThru `
-                    -WindowStyle Hidden
+                    -PassThru
 
                 if ($firewall.ExitCode -eq 0) {
                     Write-Step "Firewall rule added"

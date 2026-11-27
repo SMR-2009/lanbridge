@@ -129,7 +129,12 @@ namespace LanBridge.Tests
             Assert.False(result.Success);
             Assert.Equal("cancelled", result.ErrorCode);
             await WaitUntilAsync(() => !harness.Server.IsReceiving, 3000);
-            Assert.Empty(Directory.GetFiles(harness.Profile.ReceiveDir, "*.part"));
+            await WaitUntilAsync(
+                () => Directory.GetFiles(harness.Profile.ReceiveDir, "*.part").Length == 0,
+                3000);
+            Assert.True(
+                Directory.GetFiles(harness.Profile.ReceiveDir, "*.part").Length == 0,
+                string.Join(" | ", harness.Log.Lines));
         }
 
         [Fact]
@@ -152,6 +157,68 @@ namespace LanBridge.Tests
             Assert.True(File.Exists(harness.ReceivePath("a.bin")));
             Assert.False(File.Exists(harness.ReceivePath("b.bin")));
             Assert.Empty(Directory.GetFiles(harness.Profile.ReceiveDir, "*.part"));
+        }
+
+        [Fact]
+        public async Task Send_ResumesFromPreservedPart()
+        {
+            using var harness = new TransferHarness();
+            Assert.True((await harness.PairAsync()).Success);
+
+            var content = new byte[2 * 1024 * 1024];
+            new Random(7).NextBytes(content);
+            var source = harness.SourceFile("resume.bin", content);
+            using var receiver = new FileReceiver(harness.Profile.ReceiveDir, "resume.bin", content.Length);
+            receiver.Write(content, 0, 512 * 1024);
+            receiver.PreservePartial();
+            Assert.NotNull(FileReceiver.FindResume(harness.Profile.ReceiveDir, "resume.bin", content.Length));
+
+            var result = await harness.Client.SendAsync(harness.Peer, new[] { source }, default);
+
+            Assert.True(result.Success, result.ErrorCode + " | " + string.Join(" | ", harness.Log.Lines));
+            Assert.Equal(content, File.ReadAllBytes(harness.ReceivePath("resume.bin")));
+            var remainingParts = Directory.GetFiles(harness.Profile.ReceiveDir, "*.part");
+            var remainingMetadata = Directory.GetFiles(harness.Profile.ReceiveDir, "*.resume");
+            Assert.True(
+                remainingParts.Length == 0 && remainingMetadata.Length == 0,
+                "parts=" + string.Join(",", remainingParts) + " metadata=" + string.Join(",", remainingMetadata)
+                + " | " + string.Join(" | ", harness.Log.Lines));
+        }
+
+        [Fact]
+        public async Task Send_ResumePrefixMismatch_DeletesPreservedPart()
+        {
+            using var harness = new TransferHarness();
+            Assert.True((await harness.PairAsync()).Success);
+
+            var content = new byte[2 * 1024 * 1024];
+            for (var i = 0; i < content.Length; i++) content[i] = 0x42;
+            var source = harness.SourceFile("resume.bin", content);
+
+            using var receiver = new FileReceiver(harness.Profile.ReceiveDir, "resume.bin", content.Length);
+            for (var i = 0; i < 512 * 1024; i++) content[i] = 0x24;
+            receiver.Write(content, 0, 512 * 1024);
+            receiver.PreservePartial();
+
+            // Restore the source prefix so the sender and receiver disagree.
+            for (var i = 0; i < 512 * 1024; i++) content[i] = 0x42;
+            File.WriteAllBytes(source, content);
+
+            var result = await harness.Client.SendAsync(harness.Peer, new[] { source }, default);
+
+            Assert.False(result.Success);
+            Assert.Equal("resume_mismatch", result.ErrorCode);
+            await WaitUntilAsync(
+                () => Directory.GetFiles(harness.Profile.ReceiveDir, "*.part").Length == 0 &&
+                      Directory.GetFiles(harness.Profile.ReceiveDir, "*.resume").Length == 0,
+                3000);
+            var remainingParts = Directory.GetFiles(harness.Profile.ReceiveDir, "*.part");
+            var remainingMetadata = Directory.GetFiles(harness.Profile.ReceiveDir, "*.resume");
+            Assert.True(
+                remainingParts.Length == 0 && remainingMetadata.Length == 0,
+                "parts=" + string.Join(",", remainingParts) + " metadata=" + string.Join(",", remainingMetadata)
+                + " | " + string.Join(" | ", harness.Log.Lines));
+            Assert.False(File.Exists(harness.ReceivePath("resume.bin")));
         }
 
         [Fact]
@@ -193,6 +260,7 @@ namespace LanBridge.Tests
             public PeerStore ServerStore { get; }
             public PeerStore ClientStore { get; }
             public FakePrompter Prompter { get; }
+            public CollectingLogger Log { get; }
             public TransferServer Server { get; }
             public TransferClient Client { get; }
             public PeerEndpoint Peer { get; }
@@ -208,6 +276,7 @@ namespace LanBridge.Tests
                 ServerStore = PeerStore.Load(Path.Combine(Profile.Root, "server-peers.json"), NullLogger.Instance);
                 ClientStore = PeerStore.Load(Path.Combine(Profile.Root, "client-peers.json"), NullLogger.Instance);
                 Prompter = new FakePrompter();
+                Log = new CollectingLogger();
 
                 var port = TestData.FreePort();
                 Server = new TransferServer(
@@ -217,7 +286,7 @@ namespace LanBridge.Tests
                     ServerStore,
                     () => Profile.ReceiveDir,
                     Prompter,
-                    NullLogger.Instance,
+                    Log,
                     options,
                     allowLoopback: true,
                     receiverFactory: receiverFactory);
@@ -228,7 +297,7 @@ namespace LanBridge.Tests
                     ClientIdentity,
                     ClientStore,
                     Prompter,
-                    NullLogger.Instance,
+                    Log,
                     options);
                 Peer = new PeerEndpoint(IPAddress.Loopback, port, ServerIdentity.Fingerprint, "server", "Server");
             }

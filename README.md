@@ -31,7 +31,7 @@ The installer:
 
 To skip the firewall step, run the installer with `-NoFirewall`. To skip start at sign-in, use `-NoStartup`.
 
-If you prefer a manual install, download `lanbridge-v0.1.6-win.zip` from the [latest release](https://github.com/SMR-2009/lanbridge/releases/latest), extract it, and run:
+If you prefer a manual install, download `lanbridge-v0.1.7-win.zip` from the [latest release](https://github.com/SMR-2009/lanbridge/releases/latest), extract it, and run:
 
 ```powershell
 .\install.ps1 -SourceDir .
@@ -122,6 +122,8 @@ Transfers run over TLS 1.2 on the local network. Received names are reduced to a
 - A changed certificate is shown as **Identity changed**. LanBridge does not silently replace the pinned certificate.
 - The identity key is stored in a DPAPI-encrypted file under `%APPDATA%\LanBridge`.
 - The firewall rule is limited to the local subnet.
+- Inbound work is capped and queued, so a noisy LAN cannot create unbounded tasks.
+- Interrupted transfers keep a resumable `.part` file; retry the same files to continue.
 - The app accepts transfers only from physical Wi-Fi or Ethernet subnets, not VPN, Hyper-V, Bluetooth, or other virtual adapters.
 
 See [docs/security.md](docs/security.md) for the threat model and limitations. Report vulnerabilities through GitHub's private vulnerability reporting, not a public issue.
@@ -133,7 +135,7 @@ See [docs/security.md](docs/security.md) for the threat model and limitations. R
 | Install command returns 404 | Open the [releases page](https://github.com/SMR-2009/lanbridge/releases) and retry. The release may not be published yet. |
 | `Could not create SSL/TLS secure channel` | Use the TLS prefix in the install command above, or update Windows. |
 | `Running scripts is disabled` | The one-liner runs in memory and is not affected. If you downloaded the script, run `powershell -ExecutionPolicy Bypass -File .\install.ps1`. |
-| The other PC does not appear | Make sure both are on the same network, LanBridge is running on both, and **Visible on this network** is checked. Guest Wi-Fi often blocks this. |
+| The other PC does not appear | Make sure both are on the same network, LanBridge is running on both, and **Visible on this network** is checked. Guest Wi-Fi often blocks this. If broadcast is blocked, use **Devices → Add device by IP...** and enter the other PC's IPv4 address and port. |
 | Pairing says **Identity changed** | That is the certificate pin working. Unpair the old entry and pair again. |
 | Files are refused as unreachable | Open **Settings**, choose **Run repair**, and approve the UAC prompt if asked. |
 | UAC appears on every launch | You are probably starting a different `LanBridge.exe`. Use the installed copy in `%LOCALAPPDATA%\Programs\LanBridge`. |
@@ -149,7 +151,7 @@ Logs are at `%APPDATA%\LanBridge\lanbridge.log`. They contain device names, addr
 
 **Can it send a folder?** Zip it first.
 
-**Can a transfer resume?** No. Completed files are kept; an interrupted transfer starts over.
+**Can a transfer resume?** Yes. After a network interruption, send the same files again; LanBridge verifies the partial prefix and continues. A user cancel still removes the partial file.
 
 **Where are received files?** `Downloads\LanBridge` by default. Change it in Settings.
 
@@ -157,7 +159,7 @@ Logs are at `%APPDATA%\LanBridge\lanbridge.log`. They contain device names, addr
 
 ## Requirements
 
-- Windows 10 1903 or later, or Windows 11.
+- Windows 11. Windows 10 is no longer supported by Microsoft and is not a supported target.
 - Both PCs on the same IPv4 Wi-Fi or Ethernet network.
 - .NET Framework 4.8, which is included with supported Windows versions.
 - No runtime or admin install is required beyond the one-time firewall prompt.

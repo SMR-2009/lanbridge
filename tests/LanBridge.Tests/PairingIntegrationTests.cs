@@ -31,6 +31,24 @@ namespace LanBridge.Tests
         }
 
         [Fact]
+        public async Task Pair_ManualEndpoint_LearnsAndPinsCertificate()
+        {
+            using var harness = new PairHarness();
+
+            var result = await harness.Client.PairAsync(
+                harness.Peer.Address,
+                harness.Peer.Port,
+                default);
+
+            Assert.True(result.Success, result.ErrorCode);
+            Assert.Single(harness.ClientStore.Peers);
+            Assert.Equal(
+                harness.ServerIdentity.Fingerprint,
+                harness.ClientStore.Peers[0].Fingerprint);
+            Assert.Equal("Server", harness.ClientStore.Peers[0].Name);
+        }
+
+        [Fact]
         public async Task Pair_WrongCode_ThreeAttempts_NoPairing()
         {
             using var harness = new PairHarness();

@@ -79,7 +79,7 @@ namespace LanBridge.Core
                     Arguments = arguments,
                     UseShellExecute = true,
                     Verb = "runas",
-                    WindowStyle = ProcessWindowStyle.Hidden
+                    WindowStyle = ProcessWindowStyle.Normal
                 };
 
                 using (var process = Process.Start(info))

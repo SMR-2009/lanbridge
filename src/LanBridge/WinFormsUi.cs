@@ -6,7 +6,7 @@ using LanBridge.Core;
 
 namespace LanBridge
 {
-    public sealed class WinFormsUi : ITransferPrompter, IClientPrompter
+    public sealed class WinFormsUi : ITransferPrompter, IClientPrompter, IDisposable
     {
         private readonly SynchronizationContext _context;
         private readonly Control _uiHost;
@@ -33,6 +33,22 @@ namespace LanBridge
             _log.Info("UI dispatcher initialized on thread " + _uiThreadId);
             _lastUiPulse = Environment.TickCount;
             _uiHeartbeat = new System.Threading.Timer(CheckUiHeartbeat, null, 5000, 5000);
+            Microsoft.Win32.SystemEvents.PowerModeChanged += OnPowerModeChanged;
+        }
+
+        public void Dispose()
+        {
+            Microsoft.Win32.SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+            _uiHeartbeat?.Dispose();
+            CloseAll();
+        }
+
+        private void OnPowerModeChanged(object sender, Microsoft.Win32.PowerModeChangedEventArgs e)
+        {
+            if (e.Mode == Microsoft.Win32.PowerModes.Resume)
+            {
+                Volatile.Write(ref _lastUiPulse, Environment.TickCount);
+            }
         }
 
         private void CheckUiHeartbeat(object state)

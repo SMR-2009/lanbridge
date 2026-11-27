@@ -101,14 +101,21 @@ namespace LanBridge.Core
                             ? await Firewall.SetRuleProgramAsync(exePath).ConfigureAwait(false)
                             : await Firewall.AddRuleAsync(exePath).ConfigureAwait(false);
 
-                        if (repaired)
+                        if (repaired && Firewall.IsRulePresentFor(exePath))
                         {
                             report.Steps.Add("Firewall rule repaired.");
                         }
                         else
                         {
-                            report.Warnings.Add("Firewall rule was not updated.");
+                            report.Warnings.Add("Firewall rule was not updated. Approve the UAC prompt or add the rule with administrator rights.");
                         }
+                    }
+
+                    var firewallReady = Firewall.IsRulePresentFor(exePath);
+                    if (config.FirewallRuleAdded != firewallReady)
+                    {
+                        config.FirewallRuleAdded = firewallReady;
+                        try { config.Save(configPath); } catch { }
                     }
                 }
                 catch (Exception ex)

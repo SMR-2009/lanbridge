@@ -138,6 +138,11 @@ namespace LanBridge
                 return Task.FromResult(PairingAttemptResult.Fail("preview"));
             }
 
+            public Task AddManualDeviceAsync()
+            {
+                return Task.CompletedTask;
+            }
+
             public Task<TransferResult> SendAsync(DeviceRow row, IReadOnlyList<string> files)
             {
                 return Task.FromResult(TransferResult.Fail("preview"));

@@ -1,12 +1,42 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Runtime.Serialization;
 using System.Security.Cryptography;
 using System.Text;
 
 namespace LanBridge.Core
 {
+    [DataContract]
+    public sealed class ResumeMetadata
+    {
+        [DataMember(Name = "name")] public string Name { get; set; }
+        [DataMember(Name = "size")] public long Size { get; set; }
+        [DataMember(Name = "part")] public string Part { get; set; }
+        [DataMember(Name = "bytes")] public long Bytes { get; set; }
+        [DataMember(Name = "prefixSha256")] public string PrefixSha256 { get; set; }
+    }
+
+    public sealed class ResumePoint
+    {
+        public string PartPath { get; }
+        public long Offset { get; }
+        public string PrefixSha256 { get; }
+
+        public ResumePoint(string partPath, long offset, string prefixSha256)
+        {
+            PartPath = partPath;
+            Offset = offset;
+            PrefixSha256 = prefixSha256;
+        }
+    }
+
     public sealed class FileReceiver : IDisposable
     {
+        private const string PartExtension = ".part";
+        private const string ResumeExtension = ".resume";
+
         private readonly string _folder;
         private readonly string _sanitizedName;
         private readonly long _expectedSize;
@@ -16,10 +46,12 @@ namespace LanBridge.Core
         private long _written;
         private bool _completed;
         private bool _aborted;
+        private bool _preserved;
         private bool _disposed;
 
-        public string PartPath { get; private set; }
+        public string PartPath { get; }
         public string FinalPath { get; private set; }
+        public bool IsPreserved => _preserved;
 
         public FileReceiver(string receiveFolder, string remoteName, long expectedSize)
         {
@@ -27,11 +59,11 @@ namespace LanBridge.Core
             if (expectedSize < 0) throw new ArgumentOutOfRangeException(nameof(expectedSize));
 
             Directory.CreateDirectory(receiveFolder);
-            _folder = receiveFolder;
+            _folder = Path.GetFullPath(receiveFolder);
             _sanitizedName = PathGuard.SanitizeFileName(remoteName);
             _expectedSize = expectedSize;
+            PartPath = PathGuard.GetUniquePath(_folder, _sanitizedName + PartExtension);
 
-            PartPath = PathGuard.GetUniquePath(_folder, _sanitizedName + ".part");
             _stream = new FileStream(
                 PartPath,
                 FileMode.CreateNew,
@@ -40,12 +72,71 @@ namespace LanBridge.Core
                 1,
                 FileOptions.SequentialScan);
             _sha = new SHA256Cng();
+            WriteMetadata(0, null);
+        }
+
+        private FileReceiver(
+            string receiveFolder,
+            string remoteName,
+            long expectedSize,
+            string partPath,
+            long offset)
+        {
+            Directory.CreateDirectory(receiveFolder);
+            _folder = Path.GetFullPath(receiveFolder);
+            _sanitizedName = PathGuard.SanitizeFileName(remoteName);
+            _expectedSize = expectedSize;
+
+            if (offset <= 0 || offset > expectedSize)
+                throw new InvalidDataException("The resume offset is invalid.");
+            if (string.IsNullOrEmpty(partPath) ||
+                !string.Equals(Path.GetDirectoryName(Path.GetFullPath(partPath)), _folder, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("The resume file is outside the receive folder.");
+
+            PartPath = Path.GetFullPath(partPath);
+            if (!File.Exists(PartPath)) throw new FileNotFoundException("The partial file is missing.", PartPath);
+            if (new FileInfo(PartPath).Length != offset)
+                throw new InvalidDataException("The partial file length changed.");
+
+            _stream = new FileStream(
+                PartPath,
+                FileMode.Open,
+                FileAccess.ReadWrite,
+                FileShare.None,
+                1,
+                FileOptions.SequentialScan);
+            _stream.Seek(0, SeekOrigin.Begin);
+            _sha = new SHA256Cng();
+
+            var buffer = new byte[65536];
+            var remaining = offset;
+            while (remaining > 0)
+            {
+                var read = _stream.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
+                if (read <= 0) throw new InvalidDataException("The partial file ended early.");
+                _sha.TransformBlock(buffer, 0, read, _hashScratch, 0);
+                remaining -= read;
+            }
+
+            _stream.Seek(offset, SeekOrigin.Begin);
+            _written = offset;
+            WriteMetadata(offset, null);
+        }
+
+        public static FileReceiver OpenExisting(
+            string receiveFolder,
+            string remoteName,
+            long expectedSize,
+            string partPath,
+            long offset)
+        {
+            return new FileReceiver(receiveFolder, remoteName, expectedSize, partPath, offset);
         }
 
         public void Write(byte[] buffer, int offset, int count)
         {
             if (_disposed) throw new ObjectDisposedException(nameof(FileReceiver));
-            if (_completed || _aborted) throw new InvalidOperationException("The receiver is already closed.");
+            if (_completed || _aborted || _preserved) throw new InvalidOperationException("The receiver is already closed.");
             if (buffer == null) throw new ArgumentNullException(nameof(buffer));
             if (offset < 0 || count < 0 || offset + count > buffer.Length)
                 throw new ArgumentOutOfRangeException(nameof(offset));
@@ -68,7 +159,7 @@ namespace LanBridge.Core
         {
             if (_disposed) throw new ObjectDisposedException(nameof(FileReceiver));
             if (_completed) throw new InvalidOperationException("The receiver is already complete.");
-            if (_aborted) throw new InvalidOperationException("The receiver was aborted.");
+            if (_aborted || _preserved) throw new InvalidOperationException("The receiver is already closed.");
 
             try
             {
@@ -90,6 +181,7 @@ namespace LanBridge.Core
                     try
                     {
                         File.Move(PartPath, finalPath);
+                        DeleteMetadata();
                         FinalPath = finalPath;
                         _completed = true;
                         _sha.Dispose();
@@ -111,10 +203,40 @@ namespace LanBridge.Core
             }
         }
 
+        /// <summary>
+        /// Keeps a partial file so the next attempt can resume it.
+        /// A bad checksum or a deliberate cancel still calls Abort and removes it.
+        /// </summary>
+        public void PreservePartial()
+        {
+            if (_completed || _aborted || _preserved || _disposed) return;
+
+            try
+            {
+                if (_sha != null)
+                {
+                    _sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                    WriteMetadata(_written, Hex(_sha.Hash));
+                }
+
+                _stream?.Flush(true);
+                _stream?.Dispose();
+                _stream = null;
+                _sha?.Dispose();
+                _sha = null;
+                _preserved = true;
+            }
+            catch
+            {
+                Abort();
+            }
+        }
+
         public void Abort()
         {
             if (_completed || _aborted) return;
             _aborted = true;
+            _preserved = false;
 
             try { _stream?.Dispose(); } catch { }
             _stream = null;
@@ -128,13 +250,116 @@ namespace LanBridge.Core
             catch
             {
             }
+
+            DeleteMetadata();
+        }
+
+        public static ResumePoint FindResume(string folder, string remoteName, long expectedSize)
+        {
+            if (string.IsNullOrWhiteSpace(folder) || expectedSize <= 0) return null;
+
+            string fullFolder;
+            try
+            {
+                fullFolder = Path.GetFullPath(folder);
+                if (!Directory.Exists(fullFolder)) return null;
+            }
+            catch
+            {
+                return null;
+            }
+
+            var sanitized = PathGuard.SanitizeFileName(remoteName);
+            foreach (var sidecar in Directory.EnumerateFiles(fullFolder, "*" + PartExtension + ResumeExtension, SearchOption.TopDirectoryOnly))
+            {
+                try
+                {
+                    var metadata = ProtocolJson.Deserialize<ResumeMetadata>(File.ReadAllBytes(sidecar));
+                    if (metadata == null ||
+                        metadata.Size != expectedSize ||
+                        !string.Equals(metadata.Name, sanitized, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (string.IsNullOrEmpty(metadata.Part) ||
+                        !string.Equals(Path.GetFileName(metadata.Part), metadata.Part, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    var partPath = Path.Combine(fullFolder, metadata.Part);
+                    if (!File.Exists(partPath)) continue;
+
+                    var offset = new FileInfo(partPath).Length;
+                    if (offset <= 0 || offset > expectedSize) continue;
+
+                    return new ResumePoint(partPath, offset, HashFile(partPath));
+                }
+                catch
+                {
+                }
+            }
+
+            return null;
+        }
+
+        private void WriteMetadata(long bytes, string prefixSha256)
+        {
+            try
+            {
+                var metadata = new ResumeMetadata
+                {
+                    Name = _sanitizedName,
+                    Size = _expectedSize,
+                    Part = Path.GetFileName(PartPath),
+                    Bytes = bytes,
+                    PrefixSha256 = prefixSha256 ?? string.Empty
+                };
+                File.WriteAllBytes(
+                    PartPath + ResumeExtension,
+                    ProtocolJson.Serialize(metadata));
+            }
+            catch
+            {
+            }
+        }
+
+        private void DeleteMetadata()
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(PartPath) && File.Exists(PartPath + ResumeExtension))
+                    File.Delete(PartPath + ResumeExtension);
+            }
+            catch
+            {
+            }
+        }
+
+        private static string HashFile(string path)
+        {
+            using (var sha = new SHA256Cng())
+            using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                var buffer = new byte[65536];
+                var output = new byte[buffer.Length];
+                int read;
+                while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    sha.TransformBlock(buffer, 0, read, output, 0);
+                }
+
+                sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                return Hex(sha.Hash);
+            }
         }
 
         public void Dispose()
         {
             if (_disposed) return;
             _disposed = true;
-            if (!_completed) Abort();
+            if (!_completed && !_preserved) Abort();
         }
 
         private static string Hex(byte[] bytes)

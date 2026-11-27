@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
@@ -49,7 +50,7 @@ namespace LanBridge.Core
 
             try
             {
-                using (var session = await OpenSessionAsync(peer, "ping", cancellationToken).ConfigureAwait(false))
+                using (var session = await OpenSessionAsync(peer, "ping", false, cancellationToken).ConfigureAwait(false))
                 {
                     await TimeoutIo.WriteFrameAsync(
                         session.Stream,
@@ -82,17 +83,54 @@ namespace LanBridge.Core
             }
         }
 
-        public async Task<PairingAttemptResult> PairAsync(
+        public Task<PairingAttemptResult> PairAsync(
             PeerEndpoint peer,
             CancellationToken cancellationToken = default)
+        {
+            return PairCoreAsync(peer, false, cancellationToken);
+        }
+
+        public Task<PairingAttemptResult> PairAsync(
+            IPAddress address,
+            int port,
+            CancellationToken cancellationToken = default)
+        {
+            if (address == null) throw new ArgumentNullException(nameof(address));
+            if (address.AddressFamily != AddressFamily.InterNetwork)
+                throw new ArgumentException("An IPv4 address is required.", nameof(address));
+            if (port <= 0 || port > 65535) throw new ArgumentOutOfRangeException(nameof(port));
+
+            // The fingerprint is learned from the TLS handshake. The six-digit
+            // code still binds that certificate to this exact pairing session.
+            var peer = new PeerEndpoint(address, port, string.Empty, string.Empty, "Manual device");
+            return PairCoreAsync(peer, true, cancellationToken);
+        }
+
+        private async Task<PairingAttemptResult> PairCoreAsync(
+            PeerEndpoint peer,
+            bool allowUnpinned,
+            CancellationToken cancellationToken)
         {
             if (peer == null) throw new ArgumentNullException(nameof(peer));
             cancellationToken.ThrowIfCancellationRequested();
 
             try
             {
-                using (var session = await OpenSessionAsync(peer, "pair", cancellationToken).ConfigureAwait(false))
+                using (var session = await OpenSessionAsync(peer, "pair", allowUnpinned, cancellationToken).ConfigureAwait(false))
                 {
+                    if (allowUnpinned && string.IsNullOrWhiteSpace(peer.Fingerprint))
+                    {
+                        if (string.IsNullOrWhiteSpace(session.Ack.Fp) || session.Ack.Fp.Length != 64)
+                            return PairingAttemptResult.Fail("identity_mismatch");
+
+                        peer = new PeerEndpoint(
+                            peer.Address,
+                            peer.Port,
+                            session.Ack.Fp,
+                            session.Ack.Id,
+                            session.Ack.Name);
+                    }
+
                     var alreadyPaired = _peers.ContainsFingerprint(peer.Fingerprint);
                     if (session.Ack.Paired && alreadyPaired)
                     {
@@ -265,7 +303,7 @@ namespace LanBridge.Core
 
             try
             {
-                session = await OpenSessionAsync(peer, "send", cancellationToken).ConfigureAwait(false);
+                session = await OpenSessionAsync(peer, "send", false, cancellationToken).ConfigureAwait(false);
                 if (!session.Ack.Paired || !_peers.ContainsFingerprint(peer.Fingerprint))
                     return TransferResult.Fail("not_paired", 0, files.Count);
                 if (session.Ack.Busy)
@@ -318,13 +356,42 @@ namespace LanBridge.Core
                     + ": " + files.Count + " file(s), " + offer.TotalSize + " bytes.");
                 progress = _prompter.CreateSendProgress(offer, cancellationToken);
 
+                AcceptDto accept = null;
+                try
+                {
+                    accept = ProtocolJson.Deserialize<AcceptDto>(decision.Payload);
+                }
+                catch (ProtocolException)
+                {
+                    return TransferResult.Fail("invalid_accept", completed, files.Count);
+                }
+
+                // Keep these buffers for the whole transfer. Allocating them per
+                // file is wasteful for folders containing many small files.
+                var frameBuffer = new byte[FrameCodec.FileDataHeaderSize + FrameCodec.MaxFileChunk];
+                var hashScratch = new byte[FrameCodec.MaxFileChunk];
+
                 for (var index = 0; index < files.Count; index++)
                 {
                     var file = files[index];
+                    var resume = accept?.Resume?.FirstOrDefault(item => item.Index == index);
+                    var resumeOffset = resume == null ? 0 : resume.Offset;
+                    if (resumeOffset < 0 || resumeOffset > file.Size)
+                    {
+                        failureCode = "invalid_accept";
+                        return TransferResult.Fail("invalid_accept", completed, files.Count);
+                    }
+
                     await WriteJsonAsync(
                         session.Stream,
                         FrameType.FileBegin,
-                        new FileBeginDto { Index = index, Name = file.Name, Size = file.Size },
+                        new FileBeginDto
+                        {
+                            Index = index,
+                            Name = file.Name,
+                            Size = file.Size,
+                            ResumeOffset = resumeOffset
+                        },
                         cancellationToken).ConfigureAwait(false);
 
                     using (var stream = new FileStream(
@@ -336,15 +403,41 @@ namespace LanBridge.Core
                         FileOptions.SequentialScan))
                     using (var sha = new SHA256Cng())
                     {
-                        // One reusable frame buffer per file. The data is read
-                        // directly after the 9-byte frame header, so bulk transfer
-                        // does not allocate a new array for every 64 KiB chunk.
-                        var frameBuffer = new byte[FrameCodec.FileDataHeaderSize + FrameCodec.MaxFileChunk];
-                        var hashScratch = new byte[FrameCodec.MaxFileChunk];
-                        long sent = 0;
+                        long sent = resumeOffset;
+
+                        if (resumeOffset > 0)
+                        {
+                            using (var prefixSha = new SHA256Cng())
+                            {
+                                var remainingPrefix = resumeOffset;
+                                while (remainingPrefix > 0)
+                                {
+                                    var read = stream.Read(
+                                        hashScratch,
+                                        0,
+                                        (int)Math.Min(hashScratch.Length, remainingPrefix));
+                                    if (read <= 0)
+                                        return TransferResult.Fail("resume_mismatch", completed, files.Count);
+
+                                    prefixSha.TransformBlock(hashScratch, 0, read, frameBuffer, 0);
+                                    sha.TransformBlock(hashScratch, 0, read, frameBuffer, 0);
+                                    remainingPrefix -= read;
+                                }
+
+                                prefixSha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                                var prefix = Hex(prefixSha.Hash);
+                                if (!string.Equals(prefix, resume?.PrefixSha256, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    await SendCancelAsync(session.Stream, "resume_mismatch").ConfigureAwait(false);
+                                    failureCode = "resume_mismatch";
+                                    return TransferResult.Fail("resume_mismatch", completed, files.Count);
+                                }
+                            }
+                        }
 
                         while (true)
                         {
+                            cancellationToken.ThrowIfCancellationRequested();
                             var read = stream.Read(
                                 frameBuffer,
                                 FrameCodec.FileDataHeaderSize,
@@ -353,12 +446,17 @@ namespace LanBridge.Core
 
                             sha.TransformBlock(frameBuffer, FrameCodec.FileDataHeaderSize, read, hashScratch, 0);
                             FrameCodec.WriteFileDataHeader(frameBuffer, index, read);
+
+                            // Do not cancel an in-flight SslStream write on a user
+                            // cancel. .NET may abort the stream, leaving no healthy
+                            // channel for the CANCEL frame. Check the token before
+                            // each 64 KiB chunk instead.
                             await TimeoutIo.WriteFileDataAsync(
                                 session.Stream,
                                 frameBuffer,
                                 FrameCodec.FileDataHeaderSize + read,
                                 _options.FileIdleTimeout,
-                                cancellationToken).ConfigureAwait(false);
+                                CancellationToken.None).ConfigureAwait(false);
 
                             sent += read;
                             progress.Report(new TransferProgress
@@ -512,16 +610,21 @@ namespace LanBridge.Core
             return files;
         }
 
-        private static async Task SendCancelAsync(SslStream stream)
+        private static async Task SendCancelAsync(SslStream stream, string reason = "cancelled")
         {
             try
             {
                 await TimeoutIo.WriteFrameAsync(
                     stream,
                     FrameType.Cancel,
-                    ProtocolJson.Serialize(new CancelDto { Reason = "cancelled" }),
+                    ProtocolJson.Serialize(new CancelDto { Reason = reason }),
                     TimeSpan.FromSeconds(2),
                     CancellationToken.None).ConfigureAwait(false);
+
+                // Give the receiver a moment to see the frame before the TLS
+                // session is disposed. Without this, a busy receiver can see
+                // only an EOF and treat the cancel as a resumable network drop.
+                await Task.Delay(150).ConfigureAwait(false);
             }
             catch
             {
@@ -573,6 +676,7 @@ namespace LanBridge.Core
         private async Task<ClientSession> OpenSessionAsync(
             PeerEndpoint peer,
             string intent,
+            bool allowUnpinned,
             CancellationToken cancellationToken)
         {
             var tcp = new TcpClient(AddressFamily.InterNetwork);
@@ -586,7 +690,7 @@ namespace LanBridge.Core
                     cancellationToken).ConfigureAwait(false);
                 tcp.NoDelay = true;
 
-                ssl = Tls.CreateClient(tcp.GetStream(), _identity.Certificate, peer.Fingerprint);
+                ssl = Tls.CreateClient(tcp.GetStream(), _identity.Certificate, peer.Fingerprint, allowUnpinned);
                 await TimeoutIo.WithTimeout(
                     ssl.AuthenticateAsClientAsync(
                         "lanbridge",
@@ -633,10 +737,22 @@ namespace LanBridge.Core
                 var ack = ProtocolJson.Deserialize<HelloAckDto>(frame.Payload);
                 if (ack.V != 1)
                     throw new ProtocolException("version", "The other laptop is running an incompatible version.");
-                if (!string.Equals(ack.Fp, peer.Fingerprint, StringComparison.OrdinalIgnoreCase))
+                if (ssl.RemoteCertificate == null)
+                    throw new ProtocolException("identity_required", "The server did not present a certificate.");
+
+                string remoteFingerprint;
+                using (var remoteCertificate = new X509Certificate2(ssl.RemoteCertificate))
+                {
+                    remoteFingerprint = Tls.Fingerprint(remoteCertificate);
+                }
+
+                if (!string.Equals(ack.Fp, remoteFingerprint, StringComparison.OrdinalIgnoreCase))
+                    throw new ProtocolException("identity_mismatch", "The server certificate did not match its advertised fingerprint.");
+
+                if (!allowUnpinned && !string.Equals(ack.Fp, peer.Fingerprint, StringComparison.OrdinalIgnoreCase))
                     throw new ProtocolException("identity_mismatch", "The server certificate did not match the pinned fingerprint.");
 
-                return new ClientSession(tcp, ssl, ack, clientNonce);
+                return new ClientSession(tcp, ssl, ack, clientNonce, remoteFingerprint);
             }
             catch
             {
@@ -659,13 +775,20 @@ namespace LanBridge.Core
             public SslStream Stream { get; }
             public HelloAckDto Ack { get; }
             public byte[] Nonce { get; }
+            public string RemoteFingerprint { get; }
 
-            public ClientSession(TcpClient tcp, SslStream stream, HelloAckDto ack, byte[] nonce)
+            public ClientSession(
+                TcpClient tcp,
+                SslStream stream,
+                HelloAckDto ack,
+                byte[] nonce,
+                string remoteFingerprint)
             {
                 Tcp = tcp;
                 Stream = stream;
                 Ack = ack;
                 Nonce = nonce;
+                RemoteFingerprint = remoteFingerprint;
             }
 
             public void Dispose()

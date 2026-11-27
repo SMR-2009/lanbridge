@@ -4,7 +4,7 @@ This is the release gate. Run it once with the build you intend to publish. Both
 
 ## Prepare
 
-- [ ] Copy `artifacts\lanbridge-v0.1.6-win.zip` to laptop B, extract it, and run `LanBridge.exe`.
+- [ ] Copy `artifacts\lanbridge-v0.1.7-win.zip` to laptop B, extract it, and run `LanBridge.exe`.
 - [ ] Run `artifacts\LanBridge.exe` on laptop A.
 - [ ] Complete first-run on both: device name, receive folder, and startup choice.
 - [ ] On first install only, approve the UAC prompt for the firewall rule. There should be no UAC prompt on later launches.
@@ -27,6 +27,8 @@ This is the release gate. Run it once with the build you intend to publish. Both
 - [ ] Restart both apps. Send again without pairing; it goes straight through.
 - [ ] Turn **Visible on this network** off on B, then send from A to the paired B. It should still work via B's last endpoint.
 - [ ] Optional: reinstall B with a fresh identity. A should show **Identity changed** and refuse to auto-trust it.
+- [ ] Add a device by IP from A, approve the code on B, and pair successfully without discovery.
+- [ ] Start a 100 MB+ transfer, disable Wi-Fi on B for a few seconds, re-enable it, then send the same file again. It should resume from the partial file and finish with matching SHA-256.
 
 ## Failure checks
 

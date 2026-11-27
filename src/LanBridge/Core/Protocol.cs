@@ -145,6 +145,15 @@ namespace LanBridge.Core
     public sealed class AcceptDto
     {
         [DataMember(Name = "transferId")] public string TransferId { get; set; }
+        [DataMember(Name = "resume")] public List<ResumeFileDto> Resume { get; set; }
+    }
+
+    [DataContract]
+    public sealed class ResumeFileDto
+    {
+        [DataMember(Name = "index")] public int Index { get; set; }
+        [DataMember(Name = "offset")] public long Offset { get; set; }
+        [DataMember(Name = "prefixSha256")] public string PrefixSha256 { get; set; }
     }
 
     [DataContract]
@@ -159,6 +168,7 @@ namespace LanBridge.Core
         [DataMember(Name = "index")] public int Index { get; set; }
         [DataMember(Name = "name")] public string Name { get; set; }
         [DataMember(Name = "size")] public long Size { get; set; }
+        [DataMember(Name = "resumeOffset")] public long ResumeOffset { get; set; }
     }
 
     [DataContract]
