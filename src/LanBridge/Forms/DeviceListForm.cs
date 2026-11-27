@@ -35,6 +35,7 @@ namespace LanBridge
         private readonly Label _headerSubtitle;
         private readonly Button _primary;
         private readonly Button _refresh;
+        private readonly Button _settings;
         private readonly Button _more;
         private readonly Timer _timer;
         private readonly Timer _resizeTimer;
@@ -246,15 +247,22 @@ namespace LanBridge
             _toolTip = new ToolTip();
             _toolTip.SetToolTip(_refresh, "Refresh the device list (F5)");
 
+            _settings = MakeButton("Settings", false);
+            _settings.Click += (s, e) => _host.ShowSettings();
+            _toolTip.SetToolTip(_settings, "Open settings (Ctrl+,)");
+            buttons.Controls.Add(_settings);
 
             _more = MakeButton("More…", false);
-            _moreMenu = new ContextMenuStrip();
+            _moreMenu = new ContextMenuStrip
+            {
+                ShowImageMargin = false
+            };
             _moreMenu.Items.Add(new ToolStripMenuItem("Check for updates…", null, async (s, e) => await _host.CheckForUpdatesAsync()));
             _moreMenu.Items.Add(new ToolStripMenuItem("Add device by IP…", null, async (s, e) => await AddManualAsync()));
-            _moreMenu.Items.Add(new ToolStripMenuItem("Settings", null, (s, e) => _host.ShowSettings()));
+            _moreMenu.Items.Add(new ToolStripSeparator());
             _moreMenu.Items.Add(new ToolStripMenuItem("About LanBridge", null, (s, e) => _host.ShowAbout()));
             _more.Click += (s, e) => _moreMenu.Show(_more, new Point(0, 0), ToolStripDropDownDirection.AboveRight);
-            _toolTip.SetToolTip(_more, "Add a device by IP, settings, and about");
+            _toolTip.SetToolTip(_more, "Updates, add a device by IP, and about");
             buttons.Controls.Add(_more);
 
             _menu = new ContextMenuStrip();
