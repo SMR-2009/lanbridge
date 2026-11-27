@@ -38,8 +38,8 @@ namespace LanBridge
         private readonly Button _settings;
         private readonly Button _more;
         private readonly Timer _timer;
-        private readonly Timer _resizeTimer;
         private readonly ToolTip _toolTip;
+        private bool _ignoreListResize;
         private bool _manualBusy;
         private readonly Font _boldFont;
         private readonly ContextMenuStrip _menu;
@@ -173,21 +173,22 @@ namespace LanBridge
             _list.Columns.Add("Status", 120);
             _list.Columns.Add("Address", 170);
             _list.Columns.Add("Last seen", 140);
-            _resizeTimer = new Timer { Interval = 80 };
-            _resizeTimer.Tick += (s, e) =>
-            {
-                _resizeTimer.Stop();
-                ResizeColumns();
-                if (!IsDisposed) _list.Scrollable = true;
-            };
             _list.Resize += (s, e) =>
             {
-                // Hide scrollbars while the user drags the window edge. Column
-                // widths are recalculated after the resize settles, which avoids
-                // the one-frame scrollbar flash.
+                if (!_ignoreListResize) ResizeColumns();
+            };
+            ResizeBegin += (s, e) =>
+            {
+                // Hide scrollbars while the border is being dragged. Columns
+                // still resize live, so the table does not lag behind the window.
                 _list.Scrollable = false;
-                _resizeTimer.Stop();
-                _resizeTimer.Start();
+            };
+            ResizeEnd += (s, e) =>
+            {
+                _ignoreListResize = true;
+                _list.Scrollable = true;
+                _ignoreListResize = false;
+                ResizeColumns();
             };
             _list.SelectedIndexChanged += (s, e) => UpdatePrimary();
             _list.DoubleClick += async (s, e) => await PrimaryActionAsync();
@@ -457,10 +458,6 @@ namespace LanBridge
 
             if (changed)
             {
-                _list.Scrollable = false;
-                _resizeTimer.Stop();
-                _resizeTimer.Start();
-
                 var selected = SelectedRow;
                 var selectedFingerprint = selected?.Fingerprint;
 
@@ -716,8 +713,6 @@ namespace LanBridge
         {
             _timer.Stop();
             _timer.Dispose();
-            _resizeTimer.Stop();
-            _resizeTimer.Dispose();
             _menu.Dispose();
             _moreMenu.Dispose();
             _toolTip.Dispose();
