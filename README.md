@@ -3,13 +3,22 @@
 # LanBridge
 
 [![Build](https://github.com/SMR-2009/lanbridge/actions/workflows/build.yml/badge.svg)](https://github.com/SMR-2009/lanbridge/actions/workflows/build.yml)
+[![CodeQL](https://github.com/SMR-2009/lanbridge/actions/workflows/codeql.yml/badge.svg)](https://github.com/SMR-2009/lanbridge/actions/workflows/codeql.yml)
 [![Release](https://img.shields.io/github/v/release/SMR-2009/lanbridge?label=release)](https://github.com/SMR-2009/lanbridge/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2563eb.svg)](LICENSE)
 ![Windows](https://img.shields.io/badge/Windows-11-0078d4?logo=windows&logoColor=white)
 
-LanBridge sends files directly between two Windows PCs on the same local network. It runs in the notification area, pairs once with a six-digit code, and keeps transfers off the internet.
+LanBridge sends files directly between two Windows PCs on the same network. It runs in the notification area, pairs with a six-digit code, and keeps transfers local.
 
-No account, cloud service, or browser tab is involved.
+No account, no cloud relay, no browser tab.
+
+## What it does
+
+- Pairs two PCs once, then sends files without a code.
+- Transfers over TLS with pinned certificates, not plain FTP or an open share.
+- Checks every file with SHA-256 before it leaves the partial state.
+- Keeps an interrupted transfer resumable instead of starting over.
+- Stays out of the way in the tray.
 
 ## Install
 
@@ -19,7 +28,7 @@ On both PCs, open PowerShell and run:
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; irm https://github.com/SMR-2009/lanbridge/releases/latest/download/install.ps1 | iex
 ```
 
-The TLS prefix is for older Windows PowerShell 5.1 installations and is harmless on PowerShell 7.
+The TLS prefix is for Windows PowerShell 5.1. It is harmless on PowerShell 7.
 
 The installer:
 
@@ -27,41 +36,82 @@ The installer:
 - installs to `%LOCALAPPDATA%\Programs\LanBridge`;
 - adds a Start Menu shortcut;
 - enables start at sign-in;
-- creates the firewall rule (one UAC prompt) and launches the app.
+- adds a firewall rule scoped to the local subnet, with one UAC prompt;
+- launches LanBridge.
 
-To skip the firewall step, run the installer with `-NoFirewall`. To skip start at sign-in, use `-NoStartup`.
+Use `-NoFirewall` to skip the firewall rule. Use `-NoStartup` to skip start at sign-in.
 
-If you prefer a manual install, download `lanbridge-v0.1.8-win.zip` from the [latest release](https://github.com/SMR-2009/lanbridge/releases/latest), extract it, and run:
+### Manual install
+
+Download the `lanbridge-v*-win.zip` asset from the [latest release](https://github.com/SMR-2009/lanbridge/releases/latest), extract it, then run:
 
 ```powershell
 .\install.ps1 -SourceDir .
 ```
 
-### Updating
+The zip contains `SHA256SUMS.txt`; the installer verifies the executable against it.
 
-LanBridge does not update itself in the background. Open **Devices → More → Check for updates** to see whether a newer release exists; it only opens the release page, it never downloads or runs an update by itself. To update, quit it from the tray and run the install command again. The installer verifies the new build, replaces `LanBridge.exe`, and preserves:
+### First run
+
+Choose a device name and a receive folder. The default receive folder is `Downloads\LanBridge`. If the installer already added the firewall rule, setup detects it and does not ask again.
+
+## Pair
+
+1. Put both PCs on the same Wi-Fi or Ethernet network and start LanBridge on both.
+2. On one PC, right-click the tray icon, choose **Send files...**, then choose the other PC.
+3. On the other PC, approve the pairing request.
+4. It shows a six-digit code. Type that code on the first PC.
+5. Both PCs pin each other's certificate. Future sends do not need a code.
+
+The six-digit code is derived from both certificates and fresh nonces. It never crosses the network. A man-in-the-middle sees a different code on each screen, so pairing fails.
+
+## Send
+
+Right-click the tray icon and choose **Send files...**, open **Devices**, or drag files onto the device window.
+
+The receiving PC shows the sender, file names, sizes, and total size. The default choice is **Decline**. Either side can cancel while a transfer is running. The receiver writes to a private partial file, verifies SHA-256, then moves the file into place.
+
+Received files go to `Downloads\LanBridge` by default. Change the folder in **Settings**. A single inbound offer is limited by the configured maximum receive size, 100 GB by default.
+
+## Safety and limits
+
+- Pairing pins the full SHA-256 certificate fingerprint. A changed certificate shows as **Identity changed** and is never trusted silently.
+- The identity key is protected with DPAPI under `%APPDATA%\LanBridge`.
+- The firewall rule is inbound, allow, and limited to `LocalSubnet` for the installed executable.
+- Inbound connections and discovery packets use bounded queues.
+- File names are reduced to a safe leaf name. Existing files are not overwritten; a numeric suffix is used.
+- Interrupted transfers keep a resumable partial in the private `parts` folder. A user cancel removes it.
+- Inbound transfers are accepted only from physical Wi-Fi or Ethernet subnets, not VPN, Hyper-V, Bluetooth, or other virtual adapters.
+- There is no telemetry, cloud relay, or background update check.
+- The executable is not code-signed. Windows SmartScreen may warn on first launch. Check the release SHA-256 before running it.
+
+See [docs/security.md](docs/security.md) for the threat model and the exact limits.
+
+## Update, repair, and uninstall
+
+### Update
+
+LanBridge does not update itself in the background. Open **Devices → More → Check for updates** to compare against the latest GitHub release. The check only opens the release page when a newer version exists; it never downloads or runs anything.
+
+To update, quit LanBridge from the tray and run the install command again. The installer replaces `LanBridge.exe` and keeps:
 
 - your device name and settings in `%APPDATA%\LanBridge`;
-- your pairing pins, so you do not pair again;
-- received files in your receive folder;
+- your pairing pins;
+- received files;
 - the Start Menu shortcut, start at sign-in, and firewall rule.
-
-There is no silent updater because the binary is not code-signed. A future update check should be user-initiated and should open the release page rather than downloading and running code silently.
 
 ### Repair
 
 Re-running the installer is also the repair path. It is idempotent and does not touch received files or pairing data.
 
-The app repairs what it safely can on its own:
+The app also repairs what it can safely:
 
 - unreadable settings are quarantined and recreated with defaults;
 - unreadable pairing data is quarantined, so you pair again;
 - a damaged identity is replaced, which intentionally requires re-pairing;
-- stale partial files older than one hour are removed from the private parts folder at startup.
+- stale partial files older than one hour are removed from the private `parts` folder at startup.
 
-For a full check, open **Settings** and use **Run repair**. It checks that the receive folder is writable, saves settings, verifies start at sign-in, removes stale partial transfers, and checks that the firewall rule is inbound, enabled, and scoped to `LocalSubnet` for this executable. It asks for UAC only if the firewall rule needs changing.
-
-If the app will not start at all, run the install command again; if that cannot repair it, uninstall and install again.
+For a full check, open **Settings → Run repair**. It checks that the receive folder is writable, saves settings, verifies start at sign-in, removes stale partials, and checks the firewall rule's enabled, direction, action, profile, subnet, and executable fields.
 
 ### Uninstall
 
@@ -69,25 +119,21 @@ If the app will not start at all, run the install command again; if that cannot 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; irm https://github.com/SMR-2009/lanbridge/releases/latest/download/uninstall.ps1 | iex
 ```
 
-Received files and app settings are kept unless you pass `-RemoveData`.
+Received files and settings are kept unless you pass `-RemoveData`.
 
-## Pair
+## How it works
 
-1. Put both PCs on the same Wi-Fi or Ethernet network and make sure LanBridge is running on both.
-2. On one PC, right-click the tray icon, choose **Send files...**, then choose the other PC.
-3. The other PC shows a pairing prompt. Approve it.
-4. It displays a six-digit code. Type that code on the first PC.
-5. Both PCs store each other's certificate. Future sends do not need a code.
+```mermaid
+flowchart LR
+  A[PC A] -- UDP discovery --> B[PC B]
+  A -- pinned TLS certificate --> B
+  B -- approve and six-digit code --> A
+  A -- file offer, SHA-256, progress --> B
+```
 
-The code is a confirmation step, not a password. It is derived from both certificates and fresh nonces, and it never crosses the network. A man-in-the-middle sees different codes on the two screens, so pairing fails.
+Discovery packets are hints. A PC only appears in the list after a TCP/TLS connection proves it holds the advertised certificate. After pairing, each PC pins the other's full certificate fingerprint.
 
-## Send
-
-Right-click the tray icon and choose **Send files...**, or open **Devices**. You can also drag files onto the device window.
-
-The receiving PC shows the sender, file names, sizes, and total size. The default choice is **Decline**. While a transfer runs, both sides can cancel it, and the receiver verifies every file with SHA-256 before moving it into place.
-
-Received files go to `Downloads\LanBridge` by default. A single inbound offer is limited to the configured maximum receive size (100 GB by default); change it in **Settings**.
+Transfers use one TCP port and one UDP port. The default is `45873` for both. Control messages are JSON frames; file chunks are length-prefixed binary frames. See [docs/protocol.md](docs/protocol.md) for the wire format.
 
 ## Screenshots
 
@@ -101,68 +147,45 @@ Received files go to `Downloads\LanBridge` by default. A single inbound offer is
 
 ![Transfer progress](docs/screenshots/progress.png)
 
-## How it works
-
-```mermaid
-flowchart LR
-  A[PC A] -- UDP discovery --> B[PC B]
-  A -- pinned TLS certificate --> B
-  B -- approve and six-digit code --> A
-  A -- file offer and SHA-256 --> B
-```
-
-Discovery packets are hints. A PC only appears in the list after a TCP/TLS connection proves it holds the advertised certificate. After pairing, each PC pins the other's full SHA-256 certificate fingerprint.
-
-Transfers run over TLS with pinned certificates on the local network. Received names are reduced to a safe leaf name, duplicate names get a numeric suffix, and files are written to a `.part` file before the checksum check and atomic move.
-
-## Security
-
-- No telemetry, accounts, cloud relay, or automatic update checks.
-- Pairing uses a short code derived from both certificates and fresh nonces.
-- A changed certificate is shown as **Identity changed**. LanBridge does not silently replace the pinned certificate.
-- The identity key is stored in a DPAPI-encrypted file under `%APPDATA%\LanBridge`.
-- The firewall rule is limited to the local subnet.
-- Inbound work is capped and queued, so a noisy LAN cannot create unbounded tasks.
-- Interrupted transfers keep a resumable `.part` file; retry the same files to continue.
-- The app accepts transfers only from physical Wi-Fi or Ethernet subnets, not VPN, Hyper-V, Bluetooth, or other virtual adapters.
-
-See [docs/security.md](docs/security.md) for the threat model and limitations. Report vulnerabilities through GitHub's private vulnerability reporting, not a public issue.
-
 ## Troubleshooting
 
 | Problem | Check |
 | --- | --- |
 | Install command returns 404 | Open the [releases page](https://github.com/SMR-2009/lanbridge/releases) and retry. The release may not be published yet. |
 | `Could not create SSL/TLS secure channel` | Use the TLS prefix in the install command above, or update Windows. |
-| `Running scripts is disabled` | The one-liner runs in memory and is not affected. If you downloaded the script, run `powershell -ExecutionPolicy Bypass -File .\install.ps1`. |
-| The other PC does not appear | Make sure both are on the same network, LanBridge is running on both, and **Visible on this network** is checked. Guest Wi-Fi often blocks this. If broadcast is blocked, use **Devices → Add device by IP...** and enter the other PC's IPv4 address and port. |
-| Pairing says **Identity changed** | That is the certificate pin working. Unpair the old entry and pair again. |
-| Files are refused as unreachable | Open **Settings**, choose **Run repair**, and approve the UAC prompt if asked. |
-| UAC appears on every launch | You are probably starting a different `LanBridge.exe`. Use the installed copy in `%LOCALAPPDATA%\Programs\LanBridge`. |
-| SmartScreen warns on first launch | The binary is not code-signed. Check the release SHA-256, or build it yourself. |
+| `Running scripts is disabled` | The one-liner runs in memory. If you downloaded the script, run `powershell -ExecutionPolicy Bypass -File .\install.ps1`. |
+| The other PC does not appear | Make sure both are on the same network, LanBridge is running on both, and **Visible on this network** is on. Guest Wi-Fi often blocks discovery. If broadcast is blocked, open **Devices → More → Add device by IP...** and enter the other PC's IPv4 address and port. |
+| Pairing says **Identity changed** | The pinned certificate changed. Unpair the old entry and pair again. |
+| Inbound transfers are refused | Open **Settings → Run repair** and approve the firewall prompt if asked. |
+| UAC appears on every launch | Use the installed copy in `%LOCALAPPDATA%\Programs\LanBridge`. A different executable path gets a different firewall rule. |
+| SmartScreen warns on first launch | The binary is not signed. Verify the release SHA-256 or build it yourself. |
 
-Logs are at `%APPDATA%\LanBridge\lanbridge.log`. They contain device names, addresses, error codes, and timings. They do not contain file contents.
+Logs are at `%APPDATA%\LanBridge\lanbridge.log`. They contain device names, addresses, error codes, and timings, not file contents.
 
 ## FAQ
 
-**Does it need the internet?** Only the installer does. Transfers are local.
+**Does it need the internet?** Only the installer and the optional update check. File transfers stay on the local network.
 
 **Can it send to macOS, Linux, or a phone?** Not in this version. [LocalSend](https://localsend.org) covers those platforms.
 
-**Can it send a folder?** Zip it first.
+**Can it send a folder?** Zip it first. Folder-as-a-unit transfer is not in this release.
 
-**Can a transfer resume?** Yes. After a network interruption, send the same files again; LanBridge verifies the partial prefix and continues. A user cancel still removes the partial file.
+**Can a transfer resume?** Yes. After a network interruption, send the same files again. LanBridge verifies the partial prefix and continues. A user cancel removes the partial.
 
-**Where are received files?** `Downloads\LanBridge` by default. Change it in Settings.
+**Where are received files?** `Downloads\LanBridge` by default. Change it in **Settings**.
 
-**Does it start with Windows?** Yes, at sign-in. Turn it off in Settings, or install with `-NoStartup`.
+**Does it start with Windows?** Yes, at sign-in by default. Turn it off in **Settings**, or install with `-NoStartup`.
+
+**Does it need administrator access?** The app itself does not. Windows needs one UAC approval for the inbound firewall rule. If that step is skipped or damaged, **Settings → Run repair** asks again.
+
+**Is it audited?** No third-party audit. The protocol and threat model are documented, the source is public, and the two-PC checklist is in [docs/manual-test.md](docs/manual-test.md).
 
 ## Requirements
 
-- Windows 11. Windows 10 is no longer supported by Microsoft and is not a supported target.
+- Windows 11.
 - Both PCs on the same IPv4 Wi-Fi or Ethernet network.
-- .NET Framework 4.8, which is included with supported Windows versions.
-- No runtime or admin install is required beyond the one-time firewall prompt.
+- .NET Framework 4.8, included with supported Windows versions.
+- No runtime install. One UAC prompt for the firewall rule.
 
 ## Build
 
@@ -175,7 +198,9 @@ dotnet test LanBridge.sln -c Release
 .\build.ps1
 ```
 
-`build.ps1` writes the executable, zip, installer, uninstaller, and `SHA256SUMS.txt` to `artifacts/`. The test suite covers framing, TLS pinning, pairing, filename handling, storage, discovery, transfers, cancellation, firewall arguments, and startup registration. The physical two-PC check is in [docs/manual-test.md](docs/manual-test.md).
+`build.ps1` writes the executable, zip, installer, uninstaller, and `SHA256SUMS.txt` to `artifacts`.
+
+The suite covers frame parsing, TLS pinning, pairing, proof verification, filename handling, storage, discovery, transfers, cancellation, resume, firewall arguments, startup registration, and the WinForms pairing dialogs. The physical two-PC check is in [docs/manual-test.md](docs/manual-test.md).
 
 ## Project layout
 
