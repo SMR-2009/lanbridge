@@ -27,6 +27,8 @@ namespace LanBridge.Core
                 { "no_files", "No files were selected." },
                 { "not_lan", "The other laptop is not on your local network." },
                 { "transfer_failed", "The transfer failed." },
+                { "resume_mismatch", "The file changed since the interrupted transfer. The partial copy was removed; try again." },
+                { "invalid_accept", "The other laptop sent an invalid transfer response." },
                 { "cancelled", "The transfer was cancelled." },
                 { "timeout", "The other laptop did not respond." },
                 { "offer_rejected", "The other laptop declined the files." },

@@ -52,8 +52,13 @@ namespace LanBridge
 
             if (!SingleInstance.TryAcquire(out var mutex))
             {
-                if (!Environment.GetCommandLineArgs().Any(
-                    argument => string.Equals(argument, "--tray", StringComparison.OrdinalIgnoreCase)))
+                var arguments = Environment.GetCommandLineArgs();
+                var trayOnly = arguments.Any(
+                    argument => string.Equals(argument, "--tray", StringComparison.OrdinalIgnoreCase));
+
+                // A normal shortcut launch should open the existing window, not
+                // silently do nothing. The running instance owns the event.
+                if (!trayOnly && !ActivationChannel.Signal())
                 {
                     MessageBox.Show(
                         "LanBridge is already running. Look for it in the notification area.",
@@ -67,6 +72,7 @@ namespace LanBridge
             }
 
             DeviceIdentity identity = null;
+            var addFirewallRule = false;
 
             try
             {
@@ -99,7 +105,6 @@ namespace LanBridge
 
                 if (firstRun)
                 {
-                    bool addFirewallRule;
                     using (var setup = new FirstRunForm(config))
                     {
                         if (setup.ShowDialog() != DialogResult.OK) return;
@@ -117,30 +122,6 @@ namespace LanBridge
                     {
                         log.Warn("Could not change startup: " + ex.Message);
                     }
-
-                    if (addFirewallRule && !Firewall.IsRulePresentFor(Application.ExecutablePath))
-                    {
-                        bool added;
-                        try
-                        {
-                            added = Firewall.AddRuleAsync(Application.ExecutablePath).GetAwaiter().GetResult();
-                        }
-                        catch (Exception ex)
-                        {
-                            log.Warn("Could not add the firewall rule: " + ex.Message);
-                            added = false;
-                        }
-
-                        if (!added)
-                        {
-                            MessageBox.Show(
-                                "LanBridge is ready, but Windows Firewall was not updated.\n\n"
-                                + "You can repair the rule later from Settings.",
-                                "LanBridge",
-                                MessageBoxButtons.OK,
-                                MessageBoxIcon.Warning);
-                        }
-                    }
                 }
 
                 ReceiveFolderCleanup.DeleteStalePartFiles(
@@ -156,7 +137,14 @@ namespace LanBridge
                 var peers = PeerStore.Load(Path.Combine(appData, "peers.json"), log);
 
                 using (var context = new TrayApplicationContext(config, identity, peers, log))
+                using (ActivationChannel.Create(context.ShowDeviceList))
                 {
+                    if (addFirewallRule)
+                    {
+                        // UAC/netsh must not block the WinForms message loop.
+                        context.QueueFirewallSetup();
+                    }
+
                     if (Environment.GetCommandLineArgs().Any(
                         argument => string.Equals(argument, "--show", StringComparison.OrdinalIgnoreCase)))
                     {

@@ -28,16 +28,18 @@ namespace LanBridge.Core
         public static SslStream CreateClient(
             Stream inner,
             X509Certificate2 clientCertificate,
-            string expectedServerFingerprint)
+            string expectedServerFingerprint,
+            bool allowUnpinned = false)
         {
             if (inner == null) throw new ArgumentNullException(nameof(inner));
             if (clientCertificate == null) throw new ArgumentNullException(nameof(clientCertificate));
-            if (string.IsNullOrWhiteSpace(expectedServerFingerprint))
+            if (string.IsNullOrWhiteSpace(expectedServerFingerprint) && !allowUnpinned)
                 throw new ArgumentNullException(nameof(expectedServerFingerprint));
 
             return new SslStream(inner, false, (sender, certificate, chain, errors) =>
             {
                 if (certificate == null) return false;
+                if (string.IsNullOrWhiteSpace(expectedServerFingerprint)) return true;
 
                 var verifiable = certificate as X509Certificate2;
                 if (verifiable != null)

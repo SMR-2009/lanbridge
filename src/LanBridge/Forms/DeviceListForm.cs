@@ -15,6 +15,7 @@ namespace LanBridge
         IReadOnlyList<DeviceRow> BuildRows();
         bool Discoverable { get; }
         Task<PairingAttemptResult> PairAsync(DeviceRow row);
+        Task AddManualDeviceAsync();
         Task<TransferResult> SendAsync(DeviceRow row, IReadOnlyList<string> files);
         void Unpair(DeviceRow row);
         void RefreshDiscovery();
@@ -32,6 +33,7 @@ namespace LanBridge
         private readonly Label _headerSubtitle;
         private readonly Button _primary;
         private readonly Button _refresh;
+        private readonly Button _addIp;
         private readonly Button _settings;
         private readonly Button _about;
         private readonly Button _close;
@@ -223,6 +225,14 @@ namespace LanBridge
                 RefreshRows(true);
             };
             buttons.Controls.Add(_refresh);
+
+            _addIp = MakeButton("Add by IP…", false);
+            _addIp.Click += async (s, e) =>
+            {
+                await _host.AddManualDeviceAsync();
+                RefreshRows(true);
+            };
+            buttons.Controls.Add(_addIp);
 
             _settings = MakeButton("Settings", false);
             _settings.Click += (s, e) => _host.ShowSettings();

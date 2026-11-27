@@ -1,6 +1,6 @@
 # Security model
 
-LanBridge is a two-laptop file transfer tool for one home network. It does not try to replace a hardened enterprise file transfer system. This document states what it protects, what it does not, and where the boundaries are.
+LanBridge is a two-laptop file transfer tool for one home network. It does not try to replace a hardened enterprise file transfer system. This document states what it protects, what it does not, and where the boundaries are. It describes the 0.1.7 release line.
 
 ## Assets
 
@@ -46,6 +46,8 @@ At runtime, Schannel on .NET Framework 4.8 cannot authenticate with an ephemeral
 
 The TCP listener accepts connections only from the local subnets of physical Wi-Fi/Ethernet interfaces. VPN, Hyper-V, Bluetooth, loopback, and other virtual adapters are excluded by default. Loopback is enabled only in tests. A peer outside those subnets is rejected with `not_lan` before an offer is read.
 
+Inbound TCP clients and UDP discovery packets run behind bounded concurrency limits. A busy or hostile LAN can still consume CPU and bandwidth, but it cannot create an unbounded number of tasks.
+
 This is a guard against accidental exposure, not a firewall against a hostile local network.
 
 ### Firewall
@@ -64,7 +66,8 @@ Remote names are treated as hostile:
 - Trailing dots and spaces are removed.
 - Empty or overlong names fall back to `file` and are length-limited.
 - Files are written to a `.part` file, hashed, verified against `FILE_END`, then moved into place. Existing files are never overwritten; a numeric suffix is used.
-- A partial file is deleted on error or cancel. The receive folder is checked for free space before the offer is accepted.
+- A user cancel deletes the partial file. A network interruption keeps it with a `.part.resume` sidecar; a retry is accepted only when the peer's declared name, size, offset, and prefix SHA-256 still match.
+- The receive folder is checked for free space before the offer is accepted, with overflow-safe arithmetic.
 
 ### Logging and UI
 
@@ -76,11 +79,12 @@ LanBridge does not contact a server, check for updates, or send telemetry. The o
 
 ## Known limitations
 
-- Windows 10/11 only in 0.1.0; no macOS or Linux client.
+- Windows 11 only in 0.1.7. Windows 10 reached Microsoft end of support on 2025-10-14 and is not a supported target.
 - IPv4 only.
-- One inbound and one outbound transfer at a time; no resume, no delta sync, no folders as a single unit.
+- One inbound and one outbound transfer at a time. Interrupted files can resume, but there is no delta sync and folders are not sent as a single unit.
 - The executable is not code-signed. SmartScreen may warn on first launch. Check the SHA-256 against the release checksums if you downloaded it from somewhere other than the official release.
 - A paired device can send you files without approval if **Automatically accept files from paired devices** is enabled. It is off by default.
+- Manual endpoint entry (IPv4 plus port) is intended for networks where discovery is blocked. It still requires the six-digit pairing code; the address alone is not trusted.
 - The SAS has about 20 bits of entropy. It is safe only as a confirmation bound to an approved session, not as a standalone password.
 - The project does not defend against a compromised Windows account, malware, or a malicious paired device.
 - Discovery is IPv4 broadcast; some networks (guest Wi-Fi, client isolation, VLANs) block it. Use the manual endpoint path if discovery is unavailable in a future release; 0.1.0 has no manual endpoint entry.

@@ -2,6 +2,30 @@
 
 All notable changes to LanBridge are documented here. The format is based on Keep a Changelog, and this project uses semantic versioning.
 
+## [0.1.7] - 2026-11-28
+
+### Added
+
+- Resumable transfers. Interrupted files keep a verified `.part` file and a small resume sidecar; retrying the same files continues from the verified offset instead of starting over.
+- **Devices → Add device by IP...** for networks where UDP discovery is blocked. It still requires the same six-digit pairing approval.
+- Opening the Start Menu shortcut while LanBridge is already running now opens the existing device list instead of doing nothing.
+- A real WinForms pairing-UI regression test and activation-channel tests.
+
+### Fixed
+
+- Inbound TCP connections and UDP discovery work are now capped with bounded queues, preventing a noisy LAN from creating unbounded tasks.
+- Free-space validation no longer adds the reserve before comparing, which could overflow for a hostile declared file size.
+- First-run firewall/UAC work runs behind the message loop instead of blocking the UI thread.
+- Sleep/resume no longer produces a false "UI thread has not responded" warning.
+- A sender cancel is delivered before the TLS session closes, so the receiver removes the partial file instead of treating it as a reclaimable network drop.
+- A resumed file is only accepted if its name, size, offset, and prefix hash still match.
+
+### Changed
+
+- Transfer buffers are reused across files, reducing allocation churn for folders with many small files.
+- Protocol documentation now describes resume fields and matches the real 5-second connect / 30-second control timeouts.
+- Supported platform is Windows 11; Windows 10 reached Microsoft end of support on 2025-10-14.
+
 ## [0.1.6] - 2026-11-26
 
 ### Fixed

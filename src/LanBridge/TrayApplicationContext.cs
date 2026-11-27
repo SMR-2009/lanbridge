@@ -207,12 +207,57 @@ namespace LanBridge
 
         public void ShowDeviceList()
         {
-            OpenDeviceList(null);
+            _ui.RunOnUi(() => OpenDeviceList(null));
         }
 
         public void ShowSettings()
         {
             OpenSettings();
+        }
+
+        public void QueueFirewallSetup()
+        {
+            var timer = new System.Windows.Forms.Timer { Interval = 250 };
+            timer.Tick += async (s, e) =>
+            {
+                timer.Stop();
+                timer.Dispose();
+
+                try
+                {
+                    var present = await Task.Run(() => Firewall.IsRulePresentFor(Application.ExecutablePath));
+                    if (present)
+                    {
+                        _config.FirewallRuleAdded = true;
+                        try { _config.Save(_configPath); } catch { }
+                        return;
+                    }
+
+                    _log.Info("Adding the first-run firewall rule asynchronously.");
+                    var added = await Firewall.AddRuleAsync(Application.ExecutablePath);
+                    if (added)
+                    {
+                        _config.FirewallRuleAdded = true;
+                        try { _config.Save(_configPath); } catch { }
+                        _log.Info("First-run firewall rule added.");
+                    }
+                    else
+                    {
+                        _log.Warn("First-run firewall rule was not added.");
+                        MessageBox.Show(
+                            "LanBridge is ready, but Windows Firewall was not updated.\n\n"
+                            + "You can repair the rule later from Settings.",
+                            "LanBridge",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Warning);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _log.Warn("Could not add the first-run firewall rule: " + ex.Message);
+                }
+            };
+            timer.Start();
         }
 
         public void ShowAbout()
@@ -279,6 +324,7 @@ namespace LanBridge
 
             _devicesMenu.DropDownItems.Add(new ToolStripSeparator());
             _devicesMenu.DropDownItems.Add("Pair new device…", null, (s, e) => OpenDeviceList(null));
+            _devicesMenu.DropDownItems.Add("Add device by IP…", null, (s, e) => _ = AddManualDeviceAsync());
             _devicesMenu.DropDownItems.Add("Refresh", null, (s, e) => _discovery.Refresh());
         }
 
@@ -287,6 +333,30 @@ namespace LanBridge
             var files = ChooseFiles();
             if (files == null || files.Length == 0) return;
             OpenDeviceList(files);
+        }
+
+        public async Task AddManualDeviceAsync()
+        {
+            using (var form = new ManualEndpointForm())
+            {
+                if (form.ShowDialog() != DialogResult.OK) return;
+
+                _log.Info("Manual pairing requested for " + form.Address + ":" + form.Port);
+                var result = await _client.PairAsync(form.Address, form.Port);
+                if (!result.Success)
+                {
+                    _log.Info("Manual pairing ended: " + Sanitizer.SanitizeLogValue(result.ErrorCode));
+                    MessageBox.Show(
+                        Sanitizer.MapError(result.ErrorCode),
+                        "LanBridge",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                    return;
+                }
+
+                _discovery.Refresh();
+                OpenDeviceList(null);
+            }
         }
 
         private async Task SendToPeerAsync(PeerRecord peer)
@@ -425,7 +495,7 @@ namespace LanBridge
 
             _discovery.Dispose();
             _server.Dispose();
-            _ui.CloseAll();
+            _ui.Dispose();
 
             if (_deviceList != null && !_deviceList.IsDisposed) _deviceList.Close();
             _tray.Dispose();
@@ -446,7 +516,7 @@ namespace LanBridge
                 _menu?.Dispose();
                 _discovery?.Dispose();
                 _server?.Dispose();
-                _ui?.CloseAll();
+                _ui?.Dispose();
                 _uiHost?.Dispose();
             }
 

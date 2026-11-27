@@ -47,6 +47,25 @@ namespace LanBridge.Core
                 }
             }
 
+            // A resume sidecar is meaningless without its part file. Remove
+            // orphaned or expired sidecars so they cannot accumulate forever.
+            foreach (var metadata in Directory.EnumerateFiles(path, "*.part.resume", SearchOption.TopDirectoryOnly))
+            {
+                try
+                {
+                    var info = new FileInfo(metadata);
+                    var partPath = metadata.Substring(0, metadata.Length - ".resume".Length);
+                    if (info.LastWriteTimeUtc >= cutoff && File.Exists(partPath)) continue;
+
+                    info.Delete();
+                    log.Info("Removed stale resume metadata " + Sanitizer.SanitizeLogValue(info.Name));
+                }
+                catch (Exception ex)
+                {
+                    log.Warn("Could not remove stale resume metadata: " + Sanitizer.SanitizeLogValue(ex.Message));
+                }
+            }
+
             return removed;
         }
     }

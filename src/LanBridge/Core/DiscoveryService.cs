@@ -112,8 +112,10 @@ namespace LanBridge.Core
             new Dictionary<string, DateTime>(StringComparer.Ordinal);
         private readonly Dictionary<string, DateTime> _rateLimits =
             new Dictionary<string, DateTime>(StringComparer.Ordinal);
+        private readonly SemaphoreSlim _packetSlots = new SemaphoreSlim(8, 8);
 
         private UdpClient _udp;
+        private int _rejectedPacketCount;
         private LanScope _scope;
         private CancellationTokenSource _cancellation;
         private Task _receiveLoop;
@@ -125,6 +127,7 @@ namespace LanBridge.Core
         public string DeviceName => _deviceName;
         public bool Discoverable { get; set; } = true;
         public long PacketsSent => Interlocked.Read(ref _packetsSent);
+        public int RejectedPacketCount => Volatile.Read(ref _rejectedPacketCount);
 
         public event Action<DiscoveredDevice> DeviceConfirmed;
         public event Action<DiscoveredDevice> DeviceLost;
@@ -214,7 +217,24 @@ namespace LanBridge.Core
                 if (result.Buffer == null || result.Buffer.Length == 0) continue;
                 var buffer = result.Buffer;
                 var remote = result.RemoteEndPoint;
-                _ = Task.Run(() => HandlePacketAsync(buffer, remote, cancellationToken));
+
+                if (!_packetSlots.Wait(0))
+                {
+                    Interlocked.Increment(ref _rejectedPacketCount);
+                    continue;
+                }
+
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await HandlePacketAsync(buffer, remote, cancellationToken).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        _packetSlots.Release();
+                    }
+                });
             }
         }
 

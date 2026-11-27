@@ -26,10 +26,14 @@ namespace LanBridge.Core
         private readonly bool _allowLoopback;
         private readonly Func<LanScope> _scopeFactory;
         private readonly Func<string, string, long, FileReceiver> _receiverFactory;
+        private const int DefaultMaxConcurrentClients = 12;
         private readonly ConcurrentDictionary<TcpClient, byte> _clients = new ConcurrentDictionary<TcpClient, byte>();
+        private readonly SemaphoreSlim _clientSlots;
+        private int _rejectedClientCount;
 
         private readonly SemaphoreSlim _pairingLock = new SemaphoreSlim(1, 1);
         private TcpClient _activeClient;
+        private int _cancelRequested;
         private TcpListener _listener;
         private CancellationTokenSource _cancellation;
         private Task _acceptLoop;
@@ -39,6 +43,8 @@ namespace LanBridge.Core
         public bool Discoverable { get; set; } = true;
         public bool AutoAcceptFromPaired { get; set; }
         public bool IsReceiving => Volatile.Read(ref _receiving) != 0;
+        public int RejectedClientCount => Volatile.Read(ref _rejectedClientCount);
+        public int ActiveClientCount => _clients.Count;
         public event Action<PeerRecord> DevicePaired;
 
         public TransferServer(
@@ -52,9 +58,12 @@ namespace LanBridge.Core
             TransferOptions options = null,
             bool allowLoopback = false,
             Func<LanScope> scopeFactory = null,
-            Func<string, string, long, FileReceiver> receiverFactory = null)
+            Func<string, string, long, FileReceiver> receiverFactory = null,
+            int maxConcurrentClients = DefaultMaxConcurrentClients)
         {
             if (port <= 0 || port > 65535) throw new ArgumentOutOfRangeException(nameof(port));
+            if (maxConcurrentClients <= 0 || maxConcurrentClients > 1024)
+                throw new ArgumentOutOfRangeException(nameof(maxConcurrentClients));
             _port = port;
             _deviceName = Sanitizer.SanitizeDeviceName(deviceName);
             _identity = identity ?? throw new ArgumentNullException(nameof(identity));
@@ -66,6 +75,7 @@ namespace LanBridge.Core
             _allowLoopback = allowLoopback;
             _scopeFactory = scopeFactory ?? LanScope.Capture;
             _receiverFactory = receiverFactory ?? ((folder, name, size) => new FileReceiver(folder, name, size));
+            _clientSlots = new SemaphoreSlim(maxConcurrentClients, maxConcurrentClients);
         }
 
         public void Start()
@@ -104,8 +114,31 @@ namespace LanBridge.Core
                 }
 
                 if (client == null) continue;
+
+                if (!_clientSlots.Wait(0))
+                {
+                    var rejected = Interlocked.Increment(ref _rejectedClientCount);
+                    if (rejected == 1 || rejected % 25 == 0)
+                    {
+                        _log.Warn("Rejected inbound connection: concurrent client limit reached (" + rejected + " rejected).");
+                    }
+
+                    try { client.Close(); } catch { }
+                    continue;
+                }
+
                 _clients[client] = 0;
-                _ = Task.Run(() => HandleClientAsync(client, cancellationToken));
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await HandleClientAsync(client, cancellationToken).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        _clientSlots.Release();
+                    }
+                });
             }
         }
 
@@ -219,6 +252,7 @@ namespace LanBridge.Core
                     if (hello.Intent == "send")
                     {
                         Volatile.Write(ref _activeClient, client);
+                        Interlocked.Exchange(ref _cancelRequested, 0);
                         try
                         {
                             await HandleSendAsync(ssl, hello, ack, clientFingerprint, remote, cancellationToken).ConfigureAwait(false);
@@ -249,6 +283,7 @@ namespace LanBridge.Core
 
         public void CancelActiveTransfer()
         {
+            Interlocked.Exchange(ref _cancelRequested, 1);
             var client = Volatile.Read(ref _activeClient);
             try { client?.Close(); } catch { }
         }
@@ -535,7 +570,29 @@ namespace LanBridge.Core
                     return;
                 }
 
-                await WriteJsonAsync(ssl, FrameType.Accept, new AcceptDto { TransferId = offer.TransferId }, cancellationToken).ConfigureAwait(false);
+                var resumePoints = new List<ResumePoint>(files.Count);
+                for (var resumeIndex = 0; resumeIndex < files.Count; resumeIndex++)
+                {
+                    resumePoints.Add(FileReceiver.FindResume(folder, files[resumeIndex].Name, files[resumeIndex].Size));
+                }
+
+                var accept = new AcceptDto
+                {
+                    TransferId = offer.TransferId,
+                    Resume = new List<ResumeFileDto>()
+                };
+                for (var resumeIndex = 0; resumeIndex < resumePoints.Count; resumeIndex++)
+                {
+                    var point = resumePoints[resumeIndex];
+                    accept.Resume.Add(new ResumeFileDto
+                    {
+                        Index = resumeIndex,
+                        Offset = point == null ? 0 : point.Offset,
+                        PrefixSha256 = point == null ? string.Empty : point.PrefixSha256
+                    });
+                }
+
+                await WriteJsonAsync(ssl, FrameType.Accept, accept, cancellationToken).ConfigureAwait(false);
                 _log.Info("Incoming transfer accepted from " + Sanitizer.SanitizeLogValue(hello.Name) + ".");
                 progress = _prompter.CreateReceiveProgress(offer, cancellationToken);
 
@@ -562,7 +619,14 @@ namespace LanBridge.Core
                         return;
                     }
 
-                    if (begin.Index != index || begin.Size != files[index].Size)
+                    var resumePoint = resumePoints[index];
+                    var resumeOffset = resumePoint == null ? 0 : resumePoint.Offset;
+                    if (begin.Index != index ||
+                        begin.Size != files[index].Size ||
+                        !string.Equals(begin.Name, files[index].Name, StringComparison.OrdinalIgnoreCase) ||
+                        begin.ResumeOffset < 0 ||
+                        begin.ResumeOffset > begin.Size ||
+                        (begin.ResumeOffset != 0 && begin.ResumeOffset != resumeOffset))
                     {
                         await SendErrorAsync(ssl, "invalid_file", cancellationToken).ConfigureAwait(false);
                         return;
@@ -571,7 +635,14 @@ namespace LanBridge.Core
                     FileReceiver receiver;
                     try
                     {
-                        receiver = _receiverFactory(folder, begin.Name, begin.Size);
+                        receiver = begin.ResumeOffset > 0 && resumePoint != null
+                            ? FileReceiver.OpenExisting(
+                                folder,
+                                begin.Name,
+                                begin.Size,
+                                resumePoint.PartPath,
+                                resumePoint.Offset)
+                            : _receiverFactory(folder, begin.Name, begin.Size);
                         if (receiver == null) throw new IOException("No receiver was created.");
                     }
                     catch (Exception ex)
@@ -604,7 +675,10 @@ namespace LanBridge.Core
 
                             if (dataFrame.Type == FrameType.Cancel)
                             {
+                                _log.Info("Sender cancelled the current file; removing its partial file.");
                                 receiver.Abort();
+                                _log.Info("Partial cleanup after cancel: part=" + File.Exists(receiver.PartPath)
+                                    + ", metadata=" + File.Exists(receiver.PartPath + ".resume"));
                                 return;
                             }
 
@@ -656,7 +730,10 @@ namespace LanBridge.Core
                     }
                     catch (Exception ex) when (!(ex is OperationCanceledException))
                     {
-                        receiver.Abort();
+                        if (Volatile.Read(ref _cancelRequested) != 0)
+                            receiver.Abort();
+                        else
+                            receiver.PreservePartial();
                         failureCode = "transfer_failed";
                         _log.Warn("File receive failed: " + Sanitizer.SanitizeLogValue(ex.Message));
                         await SendFileErrorAsync(ssl, index, "write_failed", cancellationToken).ConfigureAwait(false);
@@ -665,7 +742,7 @@ namespace LanBridge.Core
                     }
                     finally
                     {
-                        receiver.Abort();
+                        if (!receiver.IsPreserved) receiver.Abort();
                     }
                 }
 
@@ -738,14 +815,21 @@ namespace LanBridge.Core
             return offer.TotalSize == total ? null : "invalid_offer";
         }
 
-        private static bool HasFreeSpace(string folder, long total)
+        public static bool HasFreeSpace(string folder, long total)
         {
+            if (string.IsNullOrWhiteSpace(folder) || total < 0) return false;
+
             try
             {
                 var root = Path.GetPathRoot(Path.GetFullPath(folder));
                 if (string.IsNullOrEmpty(root)) return true;
                 var drive = new DriveInfo(root);
-                return drive.AvailableFreeSpace >= total + 50L * 1024 * 1024;
+                const long reserve = 50L * 1024 * 1024;
+
+                // Compare before adding the reserve. The old expression could
+                // overflow for a hostile declared total and bypass the check.
+                return drive.AvailableFreeSpace > reserve &&
+                       total <= drive.AvailableFreeSpace - reserve;
             }
             catch
             {
