@@ -141,7 +141,7 @@ namespace LanBridge.Tests
 
             var task = harness.Client.SendAsync(harness.Peer, new[] { source }, default);
             await WaitUntilAsync(() => harness.Server.IsReceiving, 2000);
-            await Task.Delay(30);
+            await WaitUntilAsync(() => harness.Prompter.ReceiveProgressEvents.Any(progress => progress.BytesTransferred > 0), 5000);
             harness.Server.CancelActiveTransfer();
 
             var result = await task;

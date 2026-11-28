@@ -35,8 +35,6 @@ namespace LanBridge.Core
         private int _rejectedClientCount;
 
         private readonly SemaphoreSlim _pairingLock = new SemaphoreSlim(1, 1);
-        private TcpClient _activeClient;
-        private SslStream _activeStream;
         private int _cancelRequested;
         private int _stopping;
         private TcpListener _listener;
@@ -144,48 +142,70 @@ namespace LanBridge.Core
                     continue;
                 }
 
+                IPAddress remote;
+                try
+                {
+                    remote = ((IPEndPoint)client.Client.RemoteEndPoint).Address;
+                }
+                catch
+                {
+                    try { client.Close(); } catch { }
+                    _clientSlots.Release();
+                    continue;
+                }
+
+                var perIp = _clientsPerIp.AddOrUpdate(remote, 1, (key, current) => current + 1);
+                if (perIp > MaxClientsPerIp)
+                {
+                    DecrementIp(remote);
+                    var rejected = Interlocked.Increment(ref _rejectedClientCount);
+                    if (rejected == 1 || rejected % 25 == 0)
+                    {
+                        _log.Warn("Rejected inbound connection: per-IP limit reached for " + remote + " (" + rejected + " rejected).");
+                    }
+
+                    try { client.Close(); } catch { }
+                    _clientSlots.Release();
+                    continue;
+                }
+
+                if (!IsRemoteAllowed(remote))
+                {
+                    DecrementIp(remote);
+                    _log.Warn("Rejected non-LAN connection from " + remote);
+                    try { client.Close(); } catch { }
+                    _clientSlots.Release();
+                    continue;
+                }
+
                 _clients[client] = 0;
                 _ = Task.Run(async () =>
                 {
                     try
                     {
-                        await HandleClientAsync(client, cancellationToken).ConfigureAwait(false);
+                        await HandleClientAsync(client, remote, cancellationToken).ConfigureAwait(false);
                     }
                     finally
                     {
+                        _clients.TryRemove(client, out _);
+                        DecrementIp(remote);
+                        try { client.Close(); } catch { }
                         _clientSlots.Release();
                     }
                 });
             }
         }
 
-        private async Task HandleClientAsync(TcpClient client, CancellationToken cancellationToken)
+        private async Task HandleClientAsync(TcpClient client, IPAddress remote, CancellationToken cancellationToken)
         {
             try
             {
                 client.NoDelay = true;
-                var remote = ((IPEndPoint)client.Client.RemoteEndPoint).Address;
-
-                var perIp = _clientsPerIp.AddOrUpdate(remote, 1, (key, current) => current + 1);
-                if (perIp > MaxClientsPerIp)
-                {
-                    _clientsPerIp.AddOrUpdate(remote, 0, (key, current) => Math.Max(0, current - 1));
-                    _log.Warn("Rejected inbound connection: per-IP limit reached for " + remote);
-                    try { client.Close(); } catch { }
-                    return;
-                }
-
-                if (!IsRemoteAllowed(remote))
-                {
-                    _log.Warn("Rejected non-LAN connection from " + remote);
-                    try { client.Close(); } catch { }
-                    return;
-                }
 
                 using (var ssl = Tls.CreateServer(client.GetStream(), _identity.Certificate))
                 {
                     await TimeoutIo.WithTimeout(
-                        ssl.AuthenticateAsServerAsync(_identity.Certificate, true, SslProtocols.None, false),
+                        ssl.AuthenticateAsServerAsync(_identity.Certificate, true, Tls.Protocol, false),
                         _options.ControlTimeout,
                         cancellationToken).ConfigureAwait(false);
 
@@ -296,37 +316,17 @@ namespace LanBridge.Core
             {
                 _log.Warn("Connection failed: " + ex.GetType().Name + ": " + Sanitizer.SanitizeLogValue(ex.Message));
             }
-            finally
-            {
-                _clients.TryRemove(client, out _);
-                IPAddress remote = null;
-                try { remote = ((IPEndPoint)client.Client.RemoteEndPoint).Address; } catch { }
-                if (remote != null)
-                    _clientsPerIp.AddOrUpdate(remote, 0, (key, current) => Math.Max(0, current - 1));
-                try { client.Close(); } catch { }
-            }
+        }
+
+        private void DecrementIp(IPAddress remote)
+        {
+            if (remote == null) return;
+            _clientsPerIp.AddOrUpdate(remote, 0, (key, current) => Math.Max(0, current - 1));
         }
 
         public void CancelActiveTransfer()
         {
             Interlocked.Exchange(ref _cancelRequested, 1);
-            var stream = Volatile.Read(ref _activeStream);
-            if (stream != null)
-            {
-                try
-                {
-                    TimeoutIo.WriteFrameAsync(
-                        stream,
-                        FrameType.Cancel,
-                        ProtocolJson.Serialize(new CancelDto { Reason = "cancelled" }),
-                        _options.ControlTimeout,
-                        CancellationToken.None).Wait(TimeSpan.FromMilliseconds(500));
-                }
-                catch
-                {
-                }
-            }
-
         }
 
         private async Task HandlePairAsync(
@@ -547,8 +547,6 @@ namespace LanBridge.Core
                 return;
             }
 
-            Volatile.Write(ref _activeClient, client);
-            Volatile.Write(ref _activeStream, ssl);
             Interlocked.Exchange(ref _cancelRequested, 0);
             var completed = 0;
             IProgress<TransferProgress> progress = null;
@@ -744,6 +742,8 @@ namespace LanBridge.Core
                             if (Volatile.Read(ref _cancelRequested) != 0)
                             {
                                 _log.Info("Receiver cancelled the transfer.");
+                                await SendCancelAsync(ssl, "cancelled").ConfigureAwait(false);
+                                await DrainAfterCancelAsync(ssl, fileBuffer).ConfigureAwait(false);
                                 return;
                             }
 
@@ -897,8 +897,7 @@ namespace LanBridge.Core
                 }
 
                 Interlocked.Exchange(ref _receiving, 0);
-                Interlocked.CompareExchange(ref _activeClient, null, client);
-                Interlocked.CompareExchange(ref _activeStream, null, ssl);
+
             }
         }
 
@@ -967,6 +966,51 @@ namespace LanBridge.Core
         {
             if (IPAddress.IsLoopback(remote)) return _allowLoopback;
             return _scopeFactory().IsEligiblePeer(remote);
+        }
+
+        private static async Task DrainAfterCancelAsync(SslStream stream, byte[] buffer)
+        {
+            using (var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
+            {
+                try
+                {
+                    while (true)
+                    {
+                        var frame = await TimeoutIo.ReadFileDataAsync(
+                            stream,
+                            buffer,
+                            TimeSpan.FromSeconds(2),
+                            cancel.Token).ConfigureAwait(false);
+                        if (frame.Type == FrameType.Cancel ||
+                            frame.Type == FrameType.FileEnd ||
+                            frame.Type == FrameType.Error)
+                        {
+                            return;
+                        }
+                    }
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private static async Task SendCancelAsync(SslStream stream, string reason)
+        {
+            try
+            {
+                await TimeoutIo.WriteFrameAsync(
+                    stream,
+                    FrameType.Cancel,
+                    ProtocolJson.Serialize(new CancelDto { Reason = reason }),
+                    TimeSpan.FromSeconds(2),
+                    CancellationToken.None).ConfigureAwait(false);
+
+                await Task.Delay(150).ConfigureAwait(false);
+            }
+            catch
+            {
+            }
         }
 
         private async Task SendErrorAsync(

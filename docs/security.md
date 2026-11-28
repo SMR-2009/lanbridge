@@ -1,6 +1,6 @@
 # Security model
 
-LanBridge is a two-laptop file transfer tool for one home network. It does not try to replace a hardened enterprise file transfer system. This document states what it protects, what it does not, and where the boundaries are. It describes the 0.1.8 release line.
+LanBridge is a two-laptop file transfer tool for one home network. It does not try to replace a hardened enterprise file transfer system. This document states what it protects, what it does not, and where the boundaries are. It describes the 0.1.9 release line.
 
 ## Assets
 
@@ -75,11 +75,11 @@ Remote device names, error strings, and log values are sanitized before display 
 
 ### No internet
 
-LanBridge does not contact a server, check for updates, or send telemetry. The only network traffic is UDP discovery on the local subnets, TCP/TLS to a discovered or paired endpoint, and the loopback traffic used by tests. The GitHub release page and installer are the only internet-facing parts of the project, and they live outside the app.
+LanBridge does not run a background update check, contact a telemetry server, or send usage data. The only automatic traffic is UDP discovery on the local subnets and TCP/TLS to a discovered or paired endpoint. The manual **Check for updates** action contacts GitHub only when the user asks for it, and it never downloads or runs anything. The installer is the other internet-facing part of the project.
 
 ## Known limitations
 
-- Windows 11 only in 0.1.8. Windows 10 reached Microsoft end of support on 2025-10-14 and is not a supported target.
+- Windows 11 only in 0.1.9. Windows 10 reached Microsoft end of support on 2025-10-14 and is not a supported target.
 - IPv4 only.
 - Receive offers are capped by the configured maximum receive size. The free-space check reserves at least 1 GB and fails closed if the disk cannot be inspected.
 - One inbound and one outbound transfer at a time. Interrupted files can resume, but there is no delta sync, queue, compression, or folder-as-a-unit transfer. A single inbound offer is capped by the configured maximum receive size.

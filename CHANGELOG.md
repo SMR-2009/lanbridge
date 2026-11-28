@@ -2,6 +2,14 @@
 
 All notable changes to LanBridge are documented here. The format is based on Keep a Changelog, and this project uses semantic versioning.
 
+## [0.1.9] - 2026-11-28
+
+### Fixed
+
+- Restored explicit TLS 1.2 on both sides. .NET Framework caches SCHANNEL credentials per certificate; using `SslProtocols.None` while the same certificate acts as both server and client can make the client handshake fail after the server credential is cached. This made paired devices show as offline after 0.1.8.
+- Per-IP connection accounting now happens once in the accept loop and releases in a single `finally`, so a rejected or abandoned connection cannot leave a slot counted forever.
+- A rejected per-IP connection now increments the rejection counter and logs consistently with the global connection limit.
+
 ## [0.1.8] - 2026-11-28
 
 ### Security

@@ -20,6 +20,62 @@ namespace LanBridge.Tests
         }
 
         [Fact]
+        public async Task InboundClients_PerIpLimit_RecoversAfterDisconnect()
+        {
+            using var profile = new TempProfile();
+            using var identity = TestData.Identity(profile, "server");
+            var port = TestData.FreePort();
+            using var server = new TransferServer(
+                port,
+                "Server",
+                identity,
+                PeerStore.Load(Path.Combine(profile.Root, "peers.json"), NullLogger.Instance),
+                () => profile.ReceiveDir,
+                new FakePrompter(),
+                NullLogger.Instance,
+                allowLoopback: true,
+                maxConcurrentClients: 8);
+            server.Start();
+
+            var held = new List<TcpClient>();
+            TcpClient extra = null;
+            TcpClient recovered = null;
+            try
+            {
+                for (var i = 0; i < 4; i++)
+                {
+                    var client = new TcpClient(AddressFamily.InterNetwork);
+                    await client.ConnectAsync(IPAddress.Loopback, port);
+                    held.Add(client);
+                }
+
+                await WaitUntilAsync(() => server.ActiveClientCount == 4, 3000);
+
+                extra = new TcpClient(AddressFamily.InterNetwork);
+                await extra.ConnectAsync(IPAddress.Loopback, port);
+                await WaitUntilAsync(() => server.RejectedClientCount > 0, 3000);
+                Assert.True(server.RejectedClientCount > 0);
+
+                extra.Dispose();
+                extra = null;
+                foreach (var client in held) client.Dispose();
+                held.Clear();
+                await WaitUntilAsync(() => server.ActiveClientCount == 0, 5000);
+
+                recovered = new TcpClient(AddressFamily.InterNetwork);
+                await recovered.ConnectAsync(IPAddress.Loopback, port);
+                await WaitUntilAsync(() => server.ActiveClientCount == 1, 3000);
+                Assert.Equal(1, server.ActiveClientCount);
+            }
+            finally
+            {
+                extra?.Dispose();
+                recovered?.Dispose();
+                foreach (var client in held) client.Dispose();
+            }
+        }
+
+        [Fact]
         public async Task InboundClients_AboveLimit_AreRejected()
         {
             using var profile = new TempProfile();
