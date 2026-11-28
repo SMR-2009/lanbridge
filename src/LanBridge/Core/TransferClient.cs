@@ -761,7 +761,7 @@ namespace LanBridge.Core
                     ssl.AuthenticateAsClientAsync(
                         "lanbridge",
                         new X509CertificateCollection { _identity.Certificate },
-                        SslProtocols.None,
+                        Tls.Protocol,
                         false),
                     _options.ControlTimeout,
                     cancellationToken).ConfigureAwait(false);

@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Net.Security;
+using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
@@ -8,6 +9,12 @@ namespace LanBridge.Core
 {
     public static class Tls
     {
+        // .NET Framework caches SCHANNEL_CRED per certificate. Reusing one
+        // certificate as both server and client with SslProtocols.None can make
+        // the client half of the handshake fail after the server credential is
+        // cached. TLS 1.2 avoids that framework bug and remains supported.
+        public const SslProtocols Protocol = SslProtocols.Tls12;
+
         public static string Fingerprint(X509Certificate2 certificate)
         {
             if (certificate == null) throw new ArgumentNullException(nameof(certificate));

@@ -1,17 +1,17 @@
 # LanBridge protocol v1
 
-This document describes the wire protocol implemented by LanBridge 0.1.8. It is intentionally small: one TCP port, one UDP port, JSON payloads, and Windows-negotiated TLS with mutual certificates.
+This document describes the wire protocol implemented by LanBridge 0.1.9. It is intentionally small: one TCP port, one UDP port, JSON payloads, and TLS 1.2 with mutual certificates.
 
 ## Transport
 
 | Purpose | Transport | Default port |
 | --- | --- | --- |
 | Discovery | UDP broadcast | `45873` |
-| Pairing, control, file data | TCP + TLS (Windows-negotiated, 1.2 or newer when available) | `45873` |
+| Pairing, control, file data | TCP + TLS 1.2, pinned, mutual certificates | `45873` |
 
 - The server presents a self-signed certificate created on first launch. Clients verify its full SHA-256 fingerprint against the value learned during discovery or stored from pairing.
 - The client also presents a certificate. The server requires one and checks that the fingerprint in `HELLO` matches the certificate it actually received. During first pairing any certificate is accepted; after pairing the fingerprint must be in the peer store.
-- TLS is negotiated by Windows. The negotiated protocol and cipher are logged. Certificate chains are not used; LanBridge is a pinning system, not a public-key infrastructure.
+- TLS 1.2 is requested explicitly. .NET Framework can fail a client handshake when the same certificate is used as both server and client and the OS chooses the protocol through `SslProtocols.None`; the framework caches SCHANNEL credentials per certificate. The negotiated protocol and cipher are logged. Certificate chains are not used; LanBridge is a pinning system, not a public-key infrastructure.
 - SNI is set to `lanbridge` but is not used for routing.
 - Each request opens a new TCP/TLS connection. There is no connection reuse and no multiplexing.
 
